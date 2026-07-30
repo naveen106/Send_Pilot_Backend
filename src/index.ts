@@ -3,14 +3,12 @@ dotenv.config();
 
 import app from './app';
 import { validateDatabaseConnection } from './config/database';
-import { startScheduler } from './services/scheduler.service';
 import logger from './utils/logger';
 
 const PORT = parseInt(process.env.PORT || '5000');
 
 async function bootstrap() {
   await validateDatabaseConnection();
-  startScheduler();
 
   app.listen(PORT, () => {
     logger.info(`Server running on http://localhost:${PORT}`);

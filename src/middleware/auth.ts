@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthRequest, JwtPayload } from '../types';
-import { apiLogger } from '../utils/logger';
+import logger from '../utils/logger';
 
 export function authenticate(req: AuthRequest, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
@@ -18,7 +18,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
     req.user = decoded;
     next();
   } catch (error) {
-    apiLogger.warn(`Invalid token attempt from IP: ${req.ip}`);
+    logger.warn(`Invalid token attempt from IP: ${req.ip}`);
     res.status(401).json({ success: false, message: 'Invalid or expired token' });
   }
 }
@@ -31,7 +31,7 @@ export function authorize(...roles: string[]) {
     }
 
     if (!roles.includes(req.user.role)) {
-      apiLogger.warn(`Access denied for user ${req.user.email} with role ${req.user.role}`);
+      logger.warn(`Access denied for user ${req.user.email} with role ${req.user.role}`);
       res.status(403).json({ success: false, message: 'Forbidden: insufficient permissions' });
       return;
     }
