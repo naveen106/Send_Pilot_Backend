@@ -89,6 +89,12 @@ export async function deleteCampaign(id: number) {
   return prisma.campaign.delete({ where: { id } });
 }
 
+export async function bulkDeleteCampaigns(ids: number[]) {
+  const { count } = await prisma.campaign.deleteMany({ where: { id: { in: ids } } });
+  logger.info(`Bulk deleted ${count} campaigns`);
+  return { deleted: count };
+}
+
 export async function sendCampaignNow(campaignId: number) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error('Campaign not found');

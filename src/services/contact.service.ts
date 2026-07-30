@@ -62,6 +62,12 @@ export async function deleteContact(id: number) {
   return prisma.contact.delete({ where: { id } });
 }
 
+export async function bulkDeleteContacts(ids: number[]) {
+  const { count } = await prisma.contact.deleteMany({ where: { id: { in: ids } } });
+  logger.info(`Bulk deleted ${count} contacts`);
+  return { deleted: count };
+}
+
 export async function removeDuplicates() {
   const contacts = await prisma.contact.findMany({ orderBy: { createdAt: 'asc' } });
   const seen = new Set<string>();

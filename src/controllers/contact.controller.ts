@@ -48,6 +48,17 @@ export async function remove(req: AuthRequest, res: Response): Promise<void> {
   }
 }
 
+export async function bulkRemove(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const ids: number[] = req.body.ids;
+    if (!Array.isArray(ids) || ids.length === 0) { res.status(400).json({ success: false, message: 'No ids provided' }); return; }
+    const result = await contactService.bulkDeleteContacts(ids);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(400).json({ success: false, message: (error as Error).message });
+  }
+}
+
 export async function deduplicate(_req: AuthRequest, res: Response): Promise<void> {
   const result = await contactService.removeDuplicates();
   res.json({ success: true, data: result });
