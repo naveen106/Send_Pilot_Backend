@@ -49,6 +49,9 @@ cp .env.example .env
 
 | Variable | Description | Default |
 |---|---|---|
+| `ADMIN_EMAIL` | Initial admin account email | — |
+| `ADMIN_PASSWORD` | Initial admin account password | — |
+| `ADMIN_NAME` | Initial admin display name | `Admin` |
 | `DATABASE_URL` | MySQL connection string | `mysql://root:password@localhost:3306/bulk_email_sender` |
 | `PORT` | Server port | `5000` |
 | `NODE_ENV` | Environment | `development` |
@@ -73,18 +76,19 @@ cp .env.example .env
 ## Database Setup
 
 ```bash
-# Run migrations
-npm run prisma:migrate
-
 # Generate Prisma client
 npm run prisma:generate
 
-# (Optional) Seed initial data
-npm run seed
+# Run migrations — automatically seeds the admin account on first run
+npm run prisma:migrate
 
 # (Optional) Open Prisma Studio
 npm run prisma:studio
 ```
+
+> The admin account is created from `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_NAME` in your `.env`. The seed runs automatically after every migration via Prisma's seed hook. It uses `upsert`, so re-running is safe.
+
+To add more users after setup, log in as admin and register them via the Users page.
 
 ---
 

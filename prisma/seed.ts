@@ -1,34 +1,35 @@
 /**
- * Seed script — creates initial privileged users that can't self-register.
+ * Seed script — creates the initial admin account on first setup.
+ * Credentials are read from environment variables.
  *
- * To add more ADMIN/MANAGER accounts:
- *   1. Add an entry to SEED_USERS below and re-run: npm run seed
- *
- * To promote an existing user:
- *   - Log in as ADMIN → Users page → change role via the dropdown
- *
- * Run: npm run seed
+ * Runs automatically after `npm run prisma:migrate`.
+ * To re-run manually: npm run seed
  */
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
-const SEED_USERS = [
-  { email: 'admin@test.com',   password: 'admin123',   name: 'Test Admin',   role: 'ADMIN'   as const },
-  { email: 'manager@test.com', password: 'manager123', name: 'Test Manager', role: 'MANAGER' as const },
-];
-
 async function main() {
-  for (const u of SEED_USERS) {
-    const hashed = await bcrypt.hash(u.password, 12);
-    await prisma.user.upsert({
-      where: { email: u.email },
-      update: {},
-      create: { email: u.email, password: hashed, name: u.name, role: u.role },
-    });
-    console.log(`Seeded: ${u.email} [${u.role}]`);
+  const email = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+  const name = process.env.ADMIN_NAME || 'Admin';
+
+  if (!email || !password) {
+    throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD must be set in .env');
   }
+
+  const hashed = await bcrypt.hash(password, 12);
+  await prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: { email, password: hashed, name, role: 'ADMIN' },
+  });
+
+  console.log(`Admin account ready: ${email}`);
 }
 
 main()

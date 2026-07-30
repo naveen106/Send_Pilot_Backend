@@ -7,53 +7,76 @@ export async function createCampaign(data: {
   subject: string;
   htmlContent: string;
   scheduledAt?: Date;
+  sendMode?: 'immediate' | 'scheduled' | 'interval';
   createdBy: number;
 }) {
-  const contacts = await prisma.contact.findMany({ where: { isActive: true } });
+  const contacts = await prisma.contact.findMany({ where: { isActive: true }, select: { email: true } });
   if (contacts.length === 0) throw new Error('No active contacts found');
+
+  const isScheduled = data.sendMode === 'scheduled' && !!data.scheduledAt;
+  const recipients = contacts.map((c) => c.email);
 
   const campaign = await prisma.campaign.create({
     data: {
       name: data.name,
       subject: data.subject,
       htmlContent: data.htmlContent,
-      scheduledAt: data.scheduledAt || null,
-      status: data.scheduledAt ? 'SCHEDULED' : 'DRAFT',
+      scheduledAt: isScheduled ? data.scheduledAt! : null,
+      status: isScheduled ? 'SCHEDULED' : 'DRAFT',
       totalCount: contacts.length,
+      recipients: JSON.stringify(recipients),
       createdBy: data.createdBy,
     },
   });
 
-  await prisma.emailLog.createMany({
-    data: contacts.map((c) => ({ campaignId: campaign.id, contactId: c.id })),
-  });
+  logger.info(`Campaign created: ${campaign.name} [id: ${campaign.id}] mode: ${data.sendMode || 'immediate'}`);
 
-  logger.info(`Campaign created: ${campaign.name} [id: ${campaign.id}]`);
-  return campaign;
+  if (!isScheduled) {
+    setImmediate(() =>
+      sendCampaign(campaign.id).catch((err) =>
+        logger.error(`Campaign ${campaign.id} send failed: ${err.message}`)
+      )
+    );
+  }
+
+  return { ...campaign, recipients };
 }
+
+const campaignSelect = {
+  id: true,
+  name: true,
+  subject: true,
+  htmlContent: true,
+  status: true,
+  scheduledAt: true,
+  totalCount: true,
+  recipients: true,
+  createdBy: true,
+  createdAt: true,
+  updatedAt: true,
+  user: { select: { name: true, email: true } },
+} as const;
 
 export async function getCampaigns(page = 1, limit = 10) {
   const skip = (page - 1) * limit;
-  const [campaigns, total] = await Promise.all([
-    prisma.campaign.findMany({
-      skip,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: { user: { select: { name: true, email: true } } },
-    }),
+  const [rows, total] = await Promise.all([
+    prisma.campaign.findMany({ skip, take: limit, orderBy: { createdAt: 'desc' }, select: campaignSelect }),
     prisma.campaign.count(),
   ]);
+
+  const campaigns = rows.map(({ recipients, ...rest }) => ({
+    ...rest,
+    recipients: JSON.parse(recipients || '[]') as string[],
+  }));
+
   return { campaigns, total, page, limit };
 }
 
 export async function getCampaignById(id: number) {
-  return prisma.campaign.findUnique({
-    where: { id },
-    include: {
-      emailLogs: { include: { contact: true }, take: 50 },
-      user: { select: { name: true, email: true } },
-    },
-  });
+  const c = await prisma.campaign.findUnique({ where: { id }, select: campaignSelect });
+  if (!c) return null;
+  const { recipients, ...rest } = c;
+  return { ...rest, recipients: JSON.parse(recipients || '[]') as string[] };
 }
 
 export async function sendCampaignNow(campaignId: number) {
@@ -70,12 +93,19 @@ export async function getDashboardStats() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const [totalEmails, sentToday, scheduledCampaigns, totalCampaigns] = await Promise.all([
-    prisma.emailLog.count(),
-    prisma.emailLog.count({ where: { status: 'SENT', sentAt: { gte: today } } }),
-    prisma.campaign.count({ where: { status: 'SCHEDULED' } }),
+  const [totalCampaigns, scheduledCampaigns, completedToday] = await Promise.all([
     prisma.campaign.count(),
+    prisma.campaign.count({ where: { status: 'SCHEDULED' } }),
+    prisma.campaign.count({ where: { status: 'COMPLETED', updatedAt: { gte: today } } }),
   ]);
 
-  return { totalEmails, sentToday, scheduledCampaigns, totalCampaigns };
+  // totalEmails = sum of totalCount across all campaigns
+  const agg = await prisma.campaign.aggregate({ _sum: { totalCount: true } });
+
+  return {
+    totalEmails: agg._sum.totalCount ?? 0,
+    sentToday: completedToday,
+    scheduledCampaigns,
+    totalCampaigns,
+  };
 }

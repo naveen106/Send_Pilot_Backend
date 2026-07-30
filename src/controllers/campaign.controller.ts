@@ -2,7 +2,6 @@ import { Response } from 'express';
 import { body } from 'express-validator';
 import { AuthRequest } from '../types';
 import * as campaignService from '../services/campaign.service';
-import { retryFailedEmails } from '../services/email.service';
 
 export const campaignValidation = [
   body('name').notEmpty().trim(),
@@ -12,10 +11,11 @@ export const campaignValidation = [
 
 export async function create(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const { name, subject, htmlContent, scheduledAt } = req.body;
+    const { name, subject, htmlContent, scheduledAt, sendMode } = req.body;
     const campaign = await campaignService.createCampaign({
       name, subject, htmlContent,
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
+      sendMode: sendMode || 'immediate',
       createdBy: req.user!.userId,
     });
     res.status(201).json({ success: true, message: 'Campaign created', data: campaign });
@@ -48,8 +48,8 @@ export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
 
 export async function retry(req: AuthRequest, res: Response): Promise<void> {
   try {
-    await retryFailedEmails(parseInt(req.params.id));
-    res.json({ success: true, message: 'Retry initiated' });
+    const result = await campaignService.sendCampaignNow(parseInt(req.params.id));
+    res.json({ success: true, ...result });
   } catch (error) {
     res.status(400).json({ success: false, message: (error as Error).message });
   }

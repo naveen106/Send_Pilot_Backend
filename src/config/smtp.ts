@@ -1,5 +1,4 @@
 import nodemailer from 'nodemailer';
-import { smtpLogger } from '../utils/logger';
 import { SmtpConfig } from '../types';
 
 export function getSmtpConfig(): SmtpConfig {
@@ -19,6 +18,7 @@ export function createTransporter(config?: SmtpConfig) {
     port: smtp.port,
     secure: smtp.secure,
     auth: { user: smtp.user, pass: smtp.pass },
+    tls: { rejectUnauthorized: false },
   });
 }
 
@@ -26,10 +26,8 @@ export async function testSmtpConnection(config?: SmtpConfig): Promise<boolean> 
   try {
     const transporter = createTransporter(config);
     await transporter.verify();
-    smtpLogger.info('SMTP connection test successful');
     return true;
-  } catch (error) {
-    smtpLogger.error(`SMTP connection test failed: ${(error as Error).message}`);
+  } catch {
     return false;
   }
 }
