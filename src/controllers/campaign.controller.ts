@@ -7,13 +7,16 @@ export const campaignValidation = [
   body('name').notEmpty().trim(),
   body('subject').notEmpty().trim(),
   body('htmlContent').notEmpty(),
+  body('recipients').isArray({ min: 1 }).withMessage('At least one recipient is required'),
+  body('recipients.*').isEmail().withMessage('Each recipient must be a valid email'),
 ];
 
 export async function create(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const { name, subject, htmlContent, scheduledAt, sendMode } = req.body;
+    const { name, subject, htmlContent, recipients, scheduledAt, sendMode } = req.body;
     const campaign = await campaignService.createCampaign({
       name, subject, htmlContent,
+      recipients: recipients as string[],
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
       sendMode: sendMode || 'immediate',
       createdBy: req.user!.userId,
@@ -50,6 +53,15 @@ export async function retry(req: AuthRequest, res: Response): Promise<void> {
   try {
     const result = await campaignService.sendCampaignNow(parseInt(req.params.id));
     res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(400).json({ success: false, message: (error as Error).message });
+  }
+}
+
+export async function remove(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    await campaignService.deleteCampaign(parseInt(req.params.id));
+    res.json({ success: true, message: 'Campaign deleted' });
   } catch (error) {
     res.status(400).json({ success: false, message: (error as Error).message });
   }

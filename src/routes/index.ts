@@ -26,6 +26,7 @@ router.post('/campaigns', authenticate, authorize('ADMIN', 'MANAGER'), campaignC
 router.get('/campaigns/:id', authenticate, campaignCtrl.getOne);
 router.post('/campaigns/:id/send', authenticate, authorize('ADMIN', 'MANAGER'), campaignCtrl.sendNow);
 router.post('/campaigns/:id/retry', authenticate, authorize('ADMIN', 'MANAGER'), campaignCtrl.retry);
+router.delete('/campaigns/:id', authenticate, authorize('ADMIN'), campaignCtrl.remove);
 
 // ─── Contacts ────────────────────────────────────────────────────────────────
 router.get('/contacts', authenticate, contactCtrl.getAll);

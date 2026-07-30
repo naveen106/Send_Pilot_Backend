@@ -6,6 +6,33 @@ import { createTransporter } from '../config/smtp';
 import logger from '../utils/logger';
 import { JwtPayload, Role } from '../types';
 
+export async function ensureAdminExists(): Promise<void> {
+  const email = process.env.SMTP_USER;
+  if (!email) {
+    logger.warn('SMTP_USER not set — skipping admin auto-creation');
+    return;
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    logger.info(`Admin account already exists: ${email}`);
+    return;
+  }
+
+  const password = crypto.randomBytes(12).toString('base64url');
+  const hashed = await bcrypt.hash(password, 12);
+  await prisma.user.create({
+    data: { email, password: hashed, name: 'Admin', role: 'ADMIN' },
+  });
+
+  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  logger.info(`  Admin account created`);
+  logger.info(`  Email:    ${email}`);
+  logger.info(`  Password: ${password}`);
+  logger.info(`  Change this password after first login!`);
+  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+}
+
 export async function loginUser(email: string, password: string) {
   const user = await prisma.user.findUnique({ where: { email } });
 

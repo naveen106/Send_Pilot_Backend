@@ -2,19 +2,22 @@ import prisma from '../config/database';
 import logger from '../utils/logger';
 import { sendCampaign } from './email.service';
 
+type SendMode = 'immediate' | 'scheduled' | 'interval';
+
 export async function createCampaign(data: {
   name: string;
   subject: string;
   htmlContent: string;
+  recipients: string[];
   scheduledAt?: Date;
   sendMode?: 'immediate' | 'scheduled' | 'interval';
   createdBy: number;
 }) {
-  const contacts = await prisma.contact.findMany({ where: { isActive: true }, select: { email: true } });
-  if (contacts.length === 0) throw new Error('No active contacts found');
+  if (!data.recipients || data.recipients.length === 0)
+    throw new Error('At least one recipient is required');
 
   const isScheduled = data.sendMode === 'scheduled' && !!data.scheduledAt;
-  const recipients = contacts.map((c) => c.email);
+  const recipients = data.recipients;
 
   const campaign = await prisma.campaign.create({
     data: {
@@ -23,17 +26,18 @@ export async function createCampaign(data: {
       htmlContent: data.htmlContent,
       scheduledAt: isScheduled ? data.scheduledAt! : null,
       status: isScheduled ? 'SCHEDULED' : 'DRAFT',
-      totalCount: contacts.length,
+      totalCount: recipients.length,
       recipients: JSON.stringify(recipients),
       createdBy: data.createdBy,
     },
   });
 
-  logger.info(`Campaign created: ${campaign.name} [id: ${campaign.id}] mode: ${data.sendMode || 'immediate'}`);
+  const mode: SendMode = data.sendMode || 'immediate';
+  logger.info(`Campaign created: ${campaign.name} [id: ${campaign.id}] mode: ${mode}`);
 
   if (!isScheduled) {
     setImmediate(() =>
-      sendCampaign(campaign.id).catch((err) =>
+      sendCampaign(campaign.id, mode).catch((err) =>
         logger.error(`Campaign ${campaign.id} send failed: ${err.message}`)
       )
     );
@@ -79,13 +83,17 @@ export async function getCampaignById(id: number) {
   return { ...rest, recipients: JSON.parse(recipients || '[]') as string[] };
 }
 
+export async function deleteCampaign(id: number) {
+  return prisma.campaign.delete({ where: { id } });
+}
+
 export async function sendCampaignNow(campaignId: number) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error('Campaign not found');
   if (campaign.status === 'RUNNING') throw new Error('Campaign already running');
 
   logger.info(`Triggering instant send for campaign ${campaignId}`);
-  setImmediate(() => sendCampaign(campaignId));
+  setImmediate(() => sendCampaign(campaignId, 'immediate'));
   return { message: 'Campaign send initiated' };
 }
 
