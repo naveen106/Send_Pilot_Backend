@@ -45,7 +45,7 @@ model Campaign {
   id            Int            @id @default(autoincrement())
   name          String
   subject       String
-  htmlContent   String         @db.LongText
+  htmlContent   String         @db.Text
   status        CampaignStatus @default(DRAFT)
   scheduledAt   DateTime?
   totalCount    Int            @default(0)
@@ -53,7 +53,7 @@ model Campaign {
   user          User           @relation(fields: [createdBy], references: [id])
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
-  recipients    String         @db.LongText
+  recipients    String         @db.MediumText
 
   @@map("campaigns")
 }
