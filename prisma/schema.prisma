@@ -1,0 +1,109 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+  MANAGER
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  FAILED
+  PAUSED
+}
+
+enum EmailLogStatus {
+  PENDING
+  SENT
+  FAILED
+  RETRYING
+}
+
+model User {
+  id                Int        @id @default(autoincrement())
+  email             String     @unique
+  password          String
+  name              String
+  role              Role       @default(USER)
+  isActive          Boolean    @default(true)
+  lastLoginAt       DateTime?
+  resetToken        String?    @unique
+  resetTokenExpiry  DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  campaigns         Campaign[]
+  logs              AppLog[]
+
+  @@map("users")
+}
+
+model Campaign {
+  id            Int            @id @default(autoincrement())
+  name          String
+  subject       String
+  htmlContent   String         @db.LongText
+  status        CampaignStatus @default(DRAFT)
+  scheduledAt   DateTime?
+  sentCount     Int            @default(0)
+  failedCount   Int            @default(0)
+  totalCount    Int            @default(0)
+  createdBy     Int
+  user          User           @relation(fields: [createdBy], references: [id])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  emailLogs     EmailLog[]
+
+  @@map("campaigns")
+}
+
+model Contact {
+  id         Int        @id @default(autoincrement())
+  email      String     @unique
+  name       String?
+  isActive   Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  emailLogs  EmailLog[]
+
+  @@map("contacts")
+}
+
+model EmailLog {
+  id           Int            @id @default(autoincrement())
+  campaignId   Int
+  contactId    Int
+  status       EmailLogStatus @default(PENDING)
+  sentAt       DateTime?
+  errorMessage String?        @db.Text
+  retryCount   Int            @default(0)
+  campaign     Campaign       @relation(fields: [campaignId], references: [id])
+  contact      Contact        @relation(fields: [contactId], references: [id])
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@map("email_logs")
+}
+
+model AppLog {
+  id        Int      @id @default(autoincrement())
+  level     String
+  message   String   @db.Text
+  context   String?  @db.Text
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("app_logs")
+}
