@@ -24,6 +24,14 @@ export async function sendCampaign(
     if (!campaign) throw new Error('Campaign not found');
 
     const recipients: string[] = JSON.parse(campaign.recipients || '[]');
+    const attachments: { filename: string; content: string; contentType: string }[] =
+      JSON.parse(campaign.attachments ?? '[]');
+
+    const mailAttachments = attachments.map((a) => ({
+      filename: a.filename,
+      content: Buffer.from(a.content, 'base64'),
+      contentType: a.contentType,
+    }));
     if (recipients.length === 0) {
       emailLogger.info(`Campaign ${campaignId}: no recipients`);
       await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'COMPLETED' } });
@@ -50,6 +58,7 @@ export async function sendCampaign(
             to: email,
             subject: campaign.subject,
             html: campaign.htmlContent,
+            attachments: mailAttachments,
           });
           sent++;
           emailLogger.info(`[interval] Sent to ${email} [campaign: ${campaignId}] (${sent}/${DAILY_LIMIT})`);
@@ -81,6 +90,7 @@ export async function sendCampaign(
                 to: email,
                 subject: campaign.subject,
                 html: campaign.htmlContent,
+                attachments: mailAttachments,
               });
               sent++;
               emailLogger.info(`Sent to ${email} [campaign: ${campaignId}]`);

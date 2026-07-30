@@ -7,19 +7,28 @@ export const campaignValidation = [
   body('name').notEmpty().trim(),
   body('subject').notEmpty().trim(),
   body('htmlContent').notEmpty(),
+  body('recipients').customSanitizer((v) => (Array.isArray(v) ? v : v ? [v] : [])),
   body('recipients').isArray({ min: 1 }).withMessage('At least one recipient is required'),
   body('recipients.*').isEmail().withMessage('Each recipient must be a valid email'),
 ];
 
 export async function create(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const { name, subject, htmlContent, recipients, scheduledAt, sendMode } = req.body;
+    const { name, subject, htmlContent, scheduledAt, sendMode } = req.body;
+    const recipients: string[] = req.body['recipients'] ?? [];
+    const files = (req.files as Express.Multer.File[]) ?? [];
+    const attachments = files.map((f) => ({
+      filename: f.originalname,
+      content: f.buffer.toString('base64'),
+      contentType: f.mimetype,
+    }));
     const campaign = await campaignService.createCampaign({
       name, subject, htmlContent,
       recipients: recipients as string[],
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
       sendMode: sendMode || 'immediate',
       createdBy: req.user!.userId,
+      attachments,
     });
     res.status(201).json({ success: true, message: 'Campaign created', data: campaign });
   } catch (error) {

@@ -22,7 +22,7 @@ router.get('/dashboard', authenticate, campaignCtrl.getDashboard);
 
 // ─── Campaigns ───────────────────────────────────────────────────────────────
 router.get('/campaigns', authenticate, campaignCtrl.getAll);
-router.post('/campaigns', authenticate, authorize('ADMIN', 'MANAGER'), campaignCtrl.campaignValidation, validate, campaignCtrl.create);
+router.post('/campaigns', authenticate, authorize('ADMIN', 'MANAGER'), upload.array('attachments', 10), campaignCtrl.campaignValidation, validate, campaignCtrl.create);
 router.get('/campaigns/:id', authenticate, campaignCtrl.getOne);
 router.post('/campaigns/:id/send', authenticate, authorize('ADMIN', 'MANAGER'), campaignCtrl.sendNow);
 router.post('/campaigns/:id/retry', authenticate, authorize('ADMIN', 'MANAGER'), campaignCtrl.retry);

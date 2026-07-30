@@ -54,6 +54,7 @@ model Campaign {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   recipients    String         @db.MediumText
+  attachments   String?        @db.MediumText
 
   @@map("campaigns")
 }

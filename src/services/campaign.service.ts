@@ -12,6 +12,7 @@ export async function createCampaign(data: {
   scheduledAt?: Date;
   sendMode?: 'immediate' | 'scheduled' | 'interval';
   createdBy: number;
+  attachments?: { filename: string; content: string; contentType: string }[];
 }) {
   if (!data.recipients || data.recipients.length === 0)
     throw new Error('At least one recipient is required');
@@ -28,6 +29,7 @@ export async function createCampaign(data: {
       status: isScheduled ? 'SCHEDULED' : 'DRAFT',
       totalCount: recipients.length,
       recipients: JSON.stringify(recipients),
+      attachments: JSON.stringify(data.attachments ?? []),
       createdBy: data.createdBy,
     },
   });
