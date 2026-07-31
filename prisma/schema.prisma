@@ -49,8 +49,8 @@ model Campaign {
   status        CampaignStatus @default(DRAFT)
   scheduledAt   DateTime?
   totalCount    Int            @default(0)
-  createdBy     Int
-  user          User           @relation(fields: [createdBy], references: [id])
+  createdBy     Int?
+  user          User?          @relation(fields: [createdBy], references: [id], onDelete: SetNull)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   recipients    String         @db.MediumText
