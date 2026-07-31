@@ -120,35 +120,36 @@ backend/
 ├── prisma/
 │   ├── migrations/        # Prisma migration files
 │   ├── schema.prisma      # Database schema
-│   └── seed.ts            # Database seeder
+│   └── seed.ts            # Database seeder (upserts admin account)
 ├── src/
 │   ├── config/
-│   │   ├── database.ts    # Prisma client + connection validation
-│   │   └── smtp.ts        # Nodemailer transporter factory
-│   ├── controllers/
+│   │   ├── database.ts    # PrismaClient singleton + validateDatabaseConnection()
+│   │   └── smtp.ts        # getSmtpConfig(), createTransporter(), testSmtpConnection()
+│   ├── controllers/       # Thin HTTP layer — parse req, call service, send res
 │   │   ├── auth.controller.ts
 │   │   ├── campaign.controller.ts
 │   │   ├── contact.controller.ts
 │   │   ├── logs.controller.ts
 │   │   └── smtp.controller.ts
 │   ├── middleware/
-│   │   ├── auth.ts        # JWT authenticate + authorize guards
-│   │   ├── logging.ts     # Request logger + global error handler
-│   │   └── validation.ts  # express-validator result handler
+│   │   ├── auth.ts        # authenticate() (JWT verify) + authorize(...roles) (role guard)
+│   │   ├── logging.ts     # requestLogger (finish-event timing) + errorHandler (500 fallback)
+│   │   └── validation.ts  # validate() — runs express-validator result check
 │   ├── routes/
-│   │   └── index.ts       # All route definitions
-│   ├── services/
-│   │   ├── auth.service.ts
-│   │   ├── campaign.service.ts
-│   │   ├── contact.service.ts
-│   │   ├── email.service.ts   # Batch sending with daily limit & retry
-│   │   └── scheduler.service.ts # node-cron scheduled campaign runner
+│   │   └── index.ts       # All route definitions; multer upload configured here
+│   ├── services/          # Business logic; only layer that touches Prisma
+│   │   ├── auth.service.ts        # loginUser, forgotPassword, resetPassword, ensureAdminExists
+│   │   ├── campaign.service.ts    # createCampaign, getCampaigns, sendCampaignNow, getDashboardStats
+│   │   ├── contact.service.ts     # importContacts (CSV/XLSX), getContacts, addContact, removeDuplicates
+│   │   ├── email.service.ts       # sendCampaign() — batch/interval send with daily limit enforcement
+│   │   └── scheduler.service.ts   # node-cron every-minute tick; triggers due SCHEDULED campaigns
 │   ├── types/
-│   │   └── index.ts       # Shared TypeScript types
+│   │   └── index.ts       # Shared TS types: Role, JwtPayload, AuthRequest, SmtpConfig, ApiResponse
 │   ├── utils/
-│   │   └── logger.ts      # Winston loggers (app, api, email, smtp, scheduler)
-│   ├── app.ts             # Express app setup
-│   └── index.ts           # Entry point
+│   │   ├── helpers.ts     # Pure utilities: parseJsonArray, randomDelay, sleep, sanitizeLog
+│   │   └── logger.ts      # Default winston logger + named emailLogger; DailyRotateFile transports
+│   ├── app.ts             # Express setup: CORS, JSON body, requestLogger, routes, errorHandler
+│   └── index.ts           # Bootstrap: DB connect → ensureAdminExists → startScheduler → listen
 ├── logs/                  # Auto-generated daily rotating log files
 ├── .env                   # Environment variables (not committed)
 ├── package.json
@@ -185,6 +186,8 @@ backend/
 | `GET` | `/api/campaigns/:id` | Authenticated |
 | `POST` | `/api/campaigns/:id/send` | ADMIN, MANAGER |
 | `POST` | `/api/campaigns/:id/retry` | ADMIN, MANAGER |
+| `DELETE` | `/api/campaigns/:id` | ADMIN |
+| `DELETE` | `/api/campaigns` | ADMIN (bulk) |
 
 ### Contacts
 | Method | Path | Access |
@@ -193,6 +196,7 @@ backend/
 | `POST` | `/api/contacts` | ADMIN, MANAGER |
 | `PUT` | `/api/contacts/:id` | ADMIN, MANAGER |
 | `DELETE` | `/api/contacts/:id` | ADMIN |
+| `DELETE` | `/api/contacts` | ADMIN (bulk) |
 | `POST` | `/api/contacts/import` | ADMIN, MANAGER |
 | `POST` | `/api/contacts/deduplicate` | ADMIN |
 
@@ -216,8 +220,8 @@ backend/
 
 | Role | Campaigns | Contacts | Users | SMTP | Logs | Scheduler |
 |---|---|---|---|---|---|---|
-| `ADMIN` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `MANAGER` | ✅ (no delete) | ✅ (no delete) | ❌ | ❌ | ❌ | ❌ |
+| `ADMIN` | ✅ full | ✅ full | ✅ | ✅ | ✅ | ✅ |
+| `MANAGER` | ✅ no delete | ✅ no delete | ❌ | ❌ | ❌ | ❌ |
 | `USER` | Read only | Read only | ❌ | ❌ | ❌ | ❌ |
 
 ---
