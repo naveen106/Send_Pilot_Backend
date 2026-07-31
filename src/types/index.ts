@@ -31,3 +31,13 @@ export interface SmtpConfig {
   user: string;
   pass: string;
 }
+
+/** Campaign send strategy — controls how emails are dispatched. */
+export type SendMode = 'immediate' | 'scheduled' | 'interval';
+
+/** A file attachment stored as base64 content alongside its metadata. */
+export interface MailAttachment {
+  filename: string;
+  content: string;      // base64-encoded file content
+  contentType: string;
+}
