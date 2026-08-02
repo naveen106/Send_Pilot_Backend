@@ -1,65 +1,65 @@
 import { Response } from 'express';
 import { AuthRequest } from '../types';
 import * as contactService from '../services/contact.service';
+import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
 
 export async function importContacts(req: AuthRequest, res: Response): Promise<void> {
   try {
-    if (!req.file) { res.status(400).json({ success: false, message: 'No file uploaded' }); return; }
+    if (!req.file) { sendError(res, 400, 'No file uploaded'); return; }
     const result = await contactService.importContacts(req.file.buffer, req.file.mimetype);
-    res.json({ success: true, message: 'Import complete', data: result });
+    sendSuccess(res, result, 'Import complete');
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
 export async function getAll(req: AuthRequest, res: Response): Promise<void> {
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = parseInt(req.query.limit as string) || 20;
+  const { page, limit } = getPagination(req.query, 20);
   const search = req.query.search as string | undefined;
   const result = await contactService.getContacts(page, limit, search);
-  res.json({ success: true, data: result });
+  sendSuccess(res, result);
 }
 
 export async function add(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { email, name } = req.body;
     const contact = await contactService.addContact(email, name);
-    res.status(201).json({ success: true, data: contact });
+    sendSuccess(res, contact, undefined, 201);
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
 export async function update(req: AuthRequest, res: Response): Promise<void> {
   try {
     const contact = await contactService.updateContact(parseInt(req.params.id), req.body);
-    res.json({ success: true, data: contact });
+    sendSuccess(res, contact);
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
 export async function remove(req: AuthRequest, res: Response): Promise<void> {
   try {
     await contactService.deleteContact(parseInt(req.params.id));
-    res.json({ success: true, message: 'Contact deleted' });
+    sendSuccess(res, undefined, 'Contact deleted');
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
 export async function bulkRemove(req: AuthRequest, res: Response): Promise<void> {
   try {
     const ids: number[] = req.body.ids;
-    if (!Array.isArray(ids) || ids.length === 0) { res.status(400).json({ success: false, message: 'No ids provided' }); return; }
+    if (!Array.isArray(ids) || ids.length === 0) { sendError(res, 400, 'No ids provided'); return; }
     const result = await contactService.bulkDeleteContacts(ids);
-    res.json({ success: true, data: result });
+    sendSuccess(res, result);
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
 export async function deduplicate(_req: AuthRequest, res: Response): Promise<void> {
   const result = await contactService.removeDuplicates();
-  res.json({ success: true, data: result });
+  sendSuccess(res, result);
 }

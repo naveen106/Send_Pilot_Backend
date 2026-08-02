@@ -23,6 +23,8 @@ router.get('/dashboard', authenticate, campaignCtrl.getDashboard);
 // ─── Campaigns ───────────────────────────────────────────────────────────────
 router.get('/campaigns', authenticate, campaignCtrl.getAll);
 router.post('/campaigns', authenticate, authorize('ADMIN', 'MANAGER'), upload.array('attachments', 10), campaignCtrl.campaignValidation, validate, campaignCtrl.create);
+// Static path must be registered before /:id so "assign" is not treated as an id
+router.post('/campaigns/assign', authenticate, authorize('ADMIN', 'MANAGER'), campaignCtrl.assign);
 router.get('/campaigns/:id', authenticate, campaignCtrl.getOne);
 router.post('/campaigns/:id/send', authenticate, authorize('ADMIN', 'MANAGER'), campaignCtrl.sendNow);
 router.post('/campaigns/:id/retry', authenticate, authorize('ADMIN', 'MANAGER'), campaignCtrl.retry);
