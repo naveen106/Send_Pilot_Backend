@@ -1,6 +1,7 @@
 import prisma from '../config/database';
 import logger from '../utils/logger';
 import { parseJsonArray, sanitizeLog } from '../utils/helpers';
+import { appendUniqueTrimmedStrings, uniquePositiveIds, uniqueTrimmedStrings } from '../utils/collections';
 import { sendCampaign } from './email.service';
 import { SendMode, MailAttachment } from '../types';
 
@@ -138,6 +139,81 @@ export async function sendCampaignNow(campaignId: number) {
   logger.info(`Triggering instant send for campaign ${campaignId}`);
   setImmediate(() => sendCampaign(campaignId, 'immediate'));
   return { message: 'Campaign send initiated' };
+}
+
+/**
+ * Assigns contact emails as recipients on one or more existing campaigns.
+ * Merges with existing recipients (case-insensitive dedupe) and updates totalCount.
+ * RUNNING campaigns are skipped so an in-flight send is not mutated mid-run.
+ */
+export async function assignContactsToCampaigns(campaignIds: number[], emails: string[]) {
+  if (!campaignIds.length) throw new Error('At least one campaign is required');
+  if (!emails.length) throw new Error('At least one contact email is required');
+
+  const normalizedEmails = uniqueTrimmedStrings(emails);
+  if (!normalizedEmails.length) throw new Error('At least one valid contact email is required');
+
+  const uniqueIds = uniquePositiveIds(campaignIds);
+  if (!uniqueIds.length) throw new Error('At least one valid campaign id is required');
+
+  const campaigns = await prisma.campaign.findMany({ where: { id: { in: uniqueIds } } });
+  if (!campaigns.length) throw new Error('No campaigns found');
+
+  const results: {
+    id: number;
+    name: string;
+    added: number;
+    total: number;
+    skipped?: boolean;
+    reason?: string;
+  }[] = [];
+
+  for (const campaign of campaigns) {
+    if (campaign.status === 'RUNNING') {
+      results.push({
+        id: campaign.id,
+        name: campaign.name,
+        added: 0,
+        total: campaign.totalCount,
+        skipped: true,
+        reason: 'Campaign is currently running',
+      });
+      continue;
+    }
+
+    const existing = parseJsonArray<string>(campaign.recipients);
+    const merged = appendUniqueTrimmedStrings(existing, normalizedEmails);
+
+    const added = merged.length - existing.length;
+    if (added > 0) {
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: {
+          recipients: JSON.stringify(merged),
+          totalCount: merged.length,
+        },
+      });
+    }
+
+    results.push({
+      id: campaign.id,
+      name: campaign.name,
+      added,
+      total: merged.length,
+    });
+  }
+
+  const totalAdded = results.reduce((sum, r) => sum + r.added, 0);
+  logger.info(
+    `Assigned contacts to ${results.length} campaign(s): ${totalAdded} new recipient link(s) ` +
+    `(emails: ${normalizedEmails.length})`
+  );
+
+  return {
+    campaigns: results,
+    emailsAssigned: normalizedEmails.length,
+    totalAdded,
+  };
 }
 
 /**

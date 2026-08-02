@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { body } from 'express-validator';
 import { AuthRequest } from '../types';
 import * as campaignService from '../services/campaign.service';
+import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -39,25 +40,24 @@ export async function create(req: AuthRequest, res: Response): Promise<void> {
       attachments,
     });
 
-    res.status(201).json({ success: true, message: 'Campaign created', data: campaign });
+    sendSuccess(res, campaign, 'Campaign created', 201);
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
 /** Returns a paginated list of campaigns. */
 export async function getAll(req: AuthRequest, res: Response): Promise<void> {
-  const page  = parseInt(req.query.page as string) || 1;
-  const limit = parseInt(req.query.limit as string) || 10;
+  const { page, limit } = getPagination(req.query, 10);
   const result = await campaignService.getCampaigns(page, limit);
-  res.json({ success: true, data: result });
+  sendSuccess(res, result);
 }
 
 /** Returns a single campaign by ID. */
 export async function getOne(req: AuthRequest, res: Response): Promise<void> {
   const campaign = await campaignService.getCampaignById(parseInt(req.params.id));
-  if (!campaign) { res.status(404).json({ success: false, message: 'Not found' }); return; }
-  res.json({ success: true, data: campaign });
+  if (!campaign) { sendError(res, 404, 'Not found'); return; }
+  sendSuccess(res, campaign);
 }
 
 /**
@@ -69,20 +69,45 @@ export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
     const result = await campaignService.sendCampaignNow(parseInt(req.params.id));
     res.json({ success: true, ...result });
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
 /** Alias for sendNow — retry re-uses the same trigger logic. */
 export const retry = sendNow;
 
+/**
+ * Assigns contact emails to one or more existing campaigns (merge recipients).
+ * Body: { campaignIds: number[], emails: string[] }
+ */
+export async function assign(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const campaignIds: number[] = req.body.campaignIds;
+    const emails: string[] = req.body.emails;
+
+    if (!Array.isArray(campaignIds) || campaignIds.length === 0) {
+      sendError(res, 400, 'Select at least one campaign');
+      return;
+    }
+    if (!Array.isArray(emails) || emails.length === 0) {
+      sendError(res, 400, 'Select at least one contact');
+      return;
+    }
+
+    const result = await campaignService.assignContactsToCampaigns(campaignIds, emails);
+    sendSuccess(res, result, 'Contacts assigned to campaigns');
+  } catch (error) {
+    sendError(res, 400, getErrorMessage(error));
+  }
+}
+
 /** Deletes a single campaign by ID. */
 export async function remove(req: AuthRequest, res: Response): Promise<void> {
   try {
     await campaignService.deleteCampaign(parseInt(req.params.id));
-    res.json({ success: true, message: 'Campaign deleted' });
+    sendSuccess(res, undefined, 'Campaign deleted');
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
@@ -91,18 +116,18 @@ export async function bulkRemove(req: AuthRequest, res: Response): Promise<void>
   try {
     const ids: number[] = req.body.ids;
     if (!Array.isArray(ids) || ids.length === 0) {
-      res.status(400).json({ success: false, message: 'No ids provided' });
+      sendError(res, 400, 'No ids provided');
       return;
     }
     const result = await campaignService.bulkDeleteCampaigns(ids);
-    res.json({ success: true, data: result });
+    sendSuccess(res, result);
   } catch (error) {
-    res.status(400).json({ success: false, message: (error as Error).message });
+    sendError(res, 400, getErrorMessage(error));
   }
 }
 
 /** Returns aggregated dashboard statistics. */
 export async function getDashboard(_req: AuthRequest, res: Response): Promise<void> {
   const stats = await campaignService.getDashboardStats();
-  res.json({ success: true, data: stats });
+  sendSuccess(res, stats);
 }
