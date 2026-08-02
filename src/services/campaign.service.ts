@@ -3,6 +3,7 @@ import logger from '../utils/logger';
 import { parseJsonArray, sanitizeLog } from '../utils/helpers';
 import { appendUniqueTrimmedStrings, uniquePositiveIds, uniqueTrimmedStrings } from '../utils/collections';
 import { sendCampaign } from './email.service';
+import { createMissingContacts } from './contact.service';
 import { SendMode, MailAttachment } from '../types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -52,7 +53,8 @@ function deserializeCampaign<T extends { recipients: string; attachments: string
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 /**
- * Creates a new campaign record.
+ * Creates a new campaign record and stores its recipients as contacts.
+ * Both writes occur in one transaction, so they cannot get out of sync.
  * If not scheduled, kicks off sending immediately via setImmediate (fire-and-forget).
  */
 export async function createCampaign(data: CreateCampaignInput) {
@@ -62,22 +64,28 @@ export async function createCampaign(data: CreateCampaignInput) {
   const isScheduled = data.sendMode === 'scheduled' && !!data.scheduledAt;
   const mode: SendMode = data.sendMode || 'immediate';
 
-  const campaign = await prisma.campaign.create({
-    data: {
-      name: data.name,
-      subject: data.subject,
-      htmlContent: data.htmlContent,
-      scheduledAt: isScheduled ? data.scheduledAt! : null,
-      status: isScheduled ? 'SCHEDULED' : 'DRAFT',
-      totalCount: data.recipients.length,
-      recipients: JSON.stringify(data.recipients),
-      attachments: JSON.stringify(data.attachments ?? []),
-      createdBy: data.createdBy,
-    },
+  const { campaign, contactsAdded } = await prisma.$transaction(async (transaction) => {
+    const createdCampaign = await transaction.campaign.create({
+      data: {
+        name: data.name,
+        subject: data.subject,
+        htmlContent: data.htmlContent,
+        scheduledAt: isScheduled ? data.scheduledAt! : null,
+        status: isScheduled ? 'SCHEDULED' : 'DRAFT',
+        totalCount: data.recipients.length,
+        recipients: JSON.stringify(data.recipients),
+        attachments: JSON.stringify(data.attachments ?? []),
+        createdBy: data.createdBy,
+      },
+    });
+
+    const addedContacts = await createMissingContacts(transaction, data.recipients);
+    return { campaign: createdCampaign, contactsAdded: addedContacts };
   });
 
   // Sanitize name before logging to prevent log injection (CWE-117)
   logger.info(`Campaign created: ${sanitizeLog(campaign.name)} [id: ${campaign.id}] mode: ${mode}`);
+  logger.info(`Campaign ${campaign.id}: added ${contactsAdded} recipient contact(s)`);
 
   if (!isScheduled) {
     // Fire-and-forget — HTTP response returns immediately
