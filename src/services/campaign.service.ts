@@ -54,6 +54,16 @@ const CAMPAIGN_SELECT = {
       },
     },
   },
+  deliveries: {
+    orderBy: { sentAt: 'desc' as const },
+    select: {
+      id: true,
+      recipientEmail: true,
+      subject: true,
+      sentAt: true,
+      contact: { select: { id: true, email: true, name: true } },
+    },
+  },
 } as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -77,12 +87,21 @@ function deserializeCampaign<T extends {
       createdAt: Date;
     };
   }>;
+  deliveries?: Array<{
+    id: number;
+    recipientEmail: string;
+    subject: string;
+    sentAt: Date;
+    contact: { id: number; email: string; name: string | null } | null;
+  }>;
 }>(row: T) {
-  const { recipients, attachments, assignedCampaigns, ...rest } = row;
+  const { recipients, attachments, assignedCampaigns, deliveries, ...rest } = row;
+
   return {
     ...rest,
     recipients: parseJsonArray<string>(recipients),
     attachments: parseJsonArray<MailAttachment>(attachments),
+
     assignedCampaigns: (assignedCampaigns ?? []).map((assignment) => ({
       id: assignment.id,
       contactId: assignment.contactId,
@@ -94,6 +113,14 @@ function deserializeCampaign<T extends {
         subject: row.subject,
         status: row.status,
       },
+    })),
+
+    sentDeliveries: (deliveries ?? []).map((delivery) => ({
+      id: delivery.id,
+      email: delivery.recipientEmail,
+      subject: delivery.subject,
+      sentAt: delivery.sentAt,
+      contact: delivery.contact,
     })),
   };
 }
@@ -150,11 +177,16 @@ export async function createCampaign(data: CreateCampaignInput) {
 /**
  * Returns a paginated list of campaigns with parsed recipients.
  */
-export async function getCampaigns(page = 1, limit = 10) {
+export async function getCampaigns(page = 1, limit = 10, search?: string) {
   const skip = (page - 1) * limit;
+  // Apply the same filter to both queries so the returned page and total
+  // count describe the same name/subject search result set.
+  const where = search
+    ? { OR: [{ name: { contains: search } }, { subject: { contains: search } }] }
+    : undefined;
   const [rows, total] = await Promise.all([
-    prisma.campaign.findMany({ skip, take: limit, orderBy: { createdAt: 'desc' }, select: CAMPAIGN_SELECT }),
-    prisma.campaign.count(),
+    prisma.campaign.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' }, select: CAMPAIGN_SELECT }),
+    prisma.campaign.count({ where }),
   ]);
 
   return { campaigns: rows.map(deserializeCampaign), total, page, limit };
@@ -184,16 +216,30 @@ export async function bulkDeleteCampaigns(ids: number[]) {
 }
 
 /**
- * Triggers an immediate send for an existing campaign.
- * Throws if the campaign is not found or already running.
+ * Triggers an existing campaign using the requested delivery mode.
+ * Scheduled sends are persisted as SCHEDULED and picked up by the scheduler;
+ * immediate and interval sends are dispatched in the background.
  */
-export async function sendCampaignNow(campaignId: number) {
+export async function sendCampaignNow(campaignId: number, mode: SendMode = 'immediate', scheduledAt?: Date) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error('Campaign not found');
   if (campaign.status === 'RUNNING') throw new Error('Campaign already running');
+  if (!['immediate', 'scheduled', 'interval'].includes(mode)) throw new Error('Invalid send mode');
 
-  logger.info(`Triggering instant send for campaign ${campaignId}`);
-  setImmediate(() => sendCampaign(campaignId, 'immediate'));
+  if (mode === 'scheduled') {
+    if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) throw new Error('A valid schedule date is required');
+    if (scheduledAt.getTime() <= Date.now()) throw new Error('Schedule date must be in the future');
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { status: 'SCHEDULED', scheduledAt },
+    });
+    logger.info(`Scheduled assigned campaign ${campaignId} for ${scheduledAt.toISOString()}`);
+    return { message: 'Campaign scheduled' };
+  }
+
+  logger.info(`Triggering ${mode} send for campaign ${campaignId}`);
+  setImmediate(() => sendCampaign(campaignId, mode));
   return { message: 'Campaign send initiated' };
 }
 

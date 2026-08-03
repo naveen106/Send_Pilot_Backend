@@ -1,13 +1,21 @@
 import { Response } from 'express';
 import { AuthRequest } from '../types';
 import * as contactService from '../services/contact.service';
+import * as campaignService from '../services/campaign.service';
 import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
 
 export async function importContacts(req: AuthRequest, res: Response): Promise<void> {
   try {
     if (!req.file) { sendError(res, 400, 'No file uploaded'); return; }
     const result = await contactService.importContacts(req.file.buffer, req.file.mimetype);
-    sendSuccess(res, result, 'Import complete');
+    const rawCampaignIds = req.body.campaignIds;
+    const campaignIds = typeof rawCampaignIds === 'string'
+      ? JSON.parse(rawCampaignIds)
+      : Array.isArray(rawCampaignIds) ? rawCampaignIds : [];
+    const assignment = Array.isArray(campaignIds) && campaignIds.length
+      ? await campaignService.assignContactsToCampaigns(campaignIds.map(Number), result.emails)
+      : undefined;
+    sendSuccess(res, { ...result, assignment }, 'Import complete');
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));
   }

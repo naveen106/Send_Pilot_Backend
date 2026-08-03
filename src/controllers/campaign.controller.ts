@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { body } from 'express-validator';
-import { AuthRequest } from '../types';
+import { AuthRequest, SendMode } from '../types';
 import * as campaignService from '../services/campaign.service';
 import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
 
@@ -49,7 +49,10 @@ export async function create(req: AuthRequest, res: Response): Promise<void> {
 /** Returns a paginated list of campaigns. */
 export async function getAll(req: AuthRequest, res: Response): Promise<void> {
   const { page, limit } = getPagination(req.query, 10);
-  const result = await campaignService.getCampaigns(page, limit);
+  // Keep search optional so existing campaign-list consumers retain the same
+  // endpoint behavior when no search term is supplied.
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
+  const result = await campaignService.getCampaigns(page, limit, search);
   sendSuccess(res, result);
 }
 
@@ -66,7 +69,10 @@ export async function getOne(req: AuthRequest, res: Response): Promise<void> {
  */
 export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const result = await campaignService.sendCampaignNow(parseInt(req.params.id));
+    const requestedMode = req.body?.sendMode;
+    const mode: SendMode = requestedMode || 'immediate';
+    const scheduledAt = req.body?.scheduledAt ? new Date(req.body.scheduledAt) : undefined;
+    const result = await campaignService.sendCampaignNow(parseInt(req.params.id), mode, scheduledAt);
     res.json({ success: true, ...result });
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));

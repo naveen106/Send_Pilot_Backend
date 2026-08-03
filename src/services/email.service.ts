@@ -12,7 +12,7 @@ const DELAY_MAX = parseInt(process.env.RANDOM_DELAY_MAX || '600000');
 type MailAttachments = ReturnType<typeof buildMailAttachments>;
 type Assignment = {
   id: number;
-  contact: { email: string };
+  contact: { id: number; email: string };
 };
 
 interface SendContext {
@@ -49,7 +49,7 @@ function assignmentKey(email: string) {
 async function loadRecipients(campaignId: number, campaign: { isAssigned: boolean; recipients: string }) {
   const assignments = await prisma.assignedCampaigns.findMany({
     where: { campaignId, deliveryStatus: 'PENDING' },
-    select: { id: true, contact: { select: { email: true } } },
+    select: { id: true, contact: { select: { id: true, email: true } } },
   });
 
   return {
@@ -68,14 +68,30 @@ async function pauseAtDailyLimit(campaignId: number, sent: number) {
   return true;
 }
 
-async function removeAssignment(context: SendContext, email: string) {
-  const assignment = context.assignments.get(assignmentKey(email));
-  if (assignment) {
-    await prisma.assignedCampaigns.update({
-      where: { id: assignment.id },
-      data: { deliveryStatus: 'SENT' },
+async function recordDelivery(context: SendContext, email: string, assignment?: Assignment) {
+  //The recipient email is always retained in the history.
+  const contact = assignment?.contact ?? await prisma.contact.findUnique({
+    where: { email },
+    select: { id: true, email: true },
+  });
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.emailDelivery.create({
+      data: {
+        campaignId: context.campaignId,
+        contactId: contact?.id,
+        recipientEmail: email,
+        subject: context.subject
+      },
     });
-  }
+
+    if (assignment) {
+      await transaction.assignedCampaigns.update({
+        where: { id: assignment.id },
+        data: { deliveryStatus: 'SENT' },
+      });
+    }
+  });
 }
 
 async function sendOne(context: SendContext, email: string, prefix = '') {
@@ -83,7 +99,7 @@ async function sendOne(context: SendContext, email: string, prefix = '') {
     await context.transporter.sendMail(
       buildMailOptions(email, context.subject, context.html, context.attachments)
     );
-    await removeAssignment(context, email);
+    await recordDelivery(context, email, context.assignments.get(assignmentKey(email)));
     emailLogger.info(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
     return true;
   } catch (error) {
@@ -152,7 +168,8 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
 /**
  * Sends a campaign using immediate/scheduled batch delivery or interval delivery.
  * Assigned campaigns use only their assignedCampaigns queue. Successful queue
- * rows are deleted; failed rows remain available for retry.
+ * rows are marked SENT and every successful delivery is written to history;
+ * failed queue rows remain available for retry.
  */
 export async function sendCampaign(campaignId: number, mode: SendMode = 'immediate'): Promise<void> {
   try {

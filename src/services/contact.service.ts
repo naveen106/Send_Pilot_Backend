@@ -55,12 +55,14 @@ export async function importContacts(buffer: Buffer, mimetype: string) {
   }
 
   logger.info(`Import: ${imported} imported, ${skipped} skipped`);
-  return { imported, skipped, total: records.length };
+  return { imported, skipped, total: records.length, emails: Array.from(unique.keys()) };
 }
 
 export async function getContacts(page = 1, limit = 20, search?: string) {
   const skip = (page - 1) * limit;
-  const where = search ? { email: { contains: search } } : {};
+  const where = search
+    ? { OR: [{ email: { contains: search } }, { name: { contains: search } }] }
+    : {};
 
   const [contacts, total] = await Promise.all([
     prisma.contact.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
