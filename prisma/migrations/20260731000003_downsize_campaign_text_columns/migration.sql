@@ -1,2 +1,1 @@
-ALTER TABLE `campaigns` MODIFY `htmlContent` MEDIUMTEXT NOT NULL;
 ALTER TABLE `campaigns` MODIFY `recipients` MEDIUMTEXT NOT NULL;
