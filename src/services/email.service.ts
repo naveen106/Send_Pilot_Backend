@@ -48,7 +48,7 @@ function assignmentKey(email: string) {
 
 async function loadRecipients(campaignId: number, campaign: { isAssigned: boolean; recipients: string }) {
   const assignments = await prisma.assignedCampaigns.findMany({
-    where: { campaignId },
+    where: { campaignId, deliveryStatus: 'PENDING' },
     select: { id: true, contact: { select: { email: true } } },
   });
 
@@ -71,7 +71,10 @@ async function pauseAtDailyLimit(campaignId: number, sent: number) {
 async function removeAssignment(context: SendContext, email: string) {
   const assignment = context.assignments.get(assignmentKey(email));
   if (assignment) {
-    await prisma.assignedCampaigns.delete({ where: { id: assignment.id } });
+    await prisma.assignedCampaigns.update({
+      where: { id: assignment.id },
+      data: { deliveryStatus: 'SENT' },
+    });
   }
 }
 

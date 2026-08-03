@@ -37,17 +37,64 @@ const CAMPAIGN_SELECT = {
   createdAt: true,
   updatedAt: true,
   user: { select: { name: true, email: true } },
+  
+  assignedCampaigns: {
+    where: { deliveryStatus: 'PENDING' },
+    select: {
+      id: true,
+      contactId: true,
+      contact: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          isActive: true,
+          createdAt: true,
+        },
+      },
+    },
+  },
 } as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Parses the JSON recipients and attachments fields and spreads them onto a campaign row. */
-function deserializeCampaign<T extends { recipients: string; attachments: string | null }>(row: T) {
-  const { recipients, attachments, ...rest } = row;
+function deserializeCampaign<T extends {
+  id: number;
+  name: string;
+  subject: string;
+  status: string;
+  recipients: string;
+  attachments: string | null;
+  assignedCampaigns?: Array<{
+    id: number;
+    contactId: number;
+    contact: {
+      id: number;
+      email: string;
+      name: string | null;
+      isActive: boolean;
+      createdAt: Date;
+    };
+  }>;
+}>(row: T) {
+  const { recipients, attachments, assignedCampaigns, ...rest } = row;
   return {
     ...rest,
-    recipients:  parseJsonArray<string>(recipients),
+    recipients: parseJsonArray<string>(recipients),
     attachments: parseJsonArray<MailAttachment>(attachments),
+    assignedCampaigns: (assignedCampaigns ?? []).map((assignment) => ({
+      id: assignment.id,
+      contactId: assignment.contactId,
+      contacts: assignment.contact,
+      campaignId: row.id,
+      campaign: {
+        id: row.id,
+        name: row.name,
+        subject: row.subject,
+        status: row.status,
+      },
+    })),
   };
 }
 
@@ -200,14 +247,42 @@ export async function assignContactsToCampaigns(campaignIds: number[], emails: s
       continue;
     }
 
+    const existingAssignments = await prisma.assignedCampaigns.findMany({
+      where: {
+        campaignId: campaign.id,
+        contactId: { in: matchedContacts.map((contact) => contact.id) },
+      },
+      select: { contactId: true, deliveryStatus: true },
+    });
+    const sentContactIds = new Set(
+      existingAssignments
+        .filter((assignment) => assignment.deliveryStatus === 'SENT')
+        .map((assignment) => assignment.contactId)
+    );
+    const pendingContactIds = new Set(
+      existingAssignments
+        .filter((assignment) => assignment.deliveryStatus === 'PENDING')
+        .map((assignment) => assignment.contactId)
+    );
+    const originalRecipientEmails = new Set(
+      parseJsonArray<string>(campaign.recipients).map((email) => email.trim().toLowerCase())
+    );
+    const contactsToAssign = matchedContacts.filter((contact) =>
+      !sentContactIds.has(contact.id) &&
+      !pendingContactIds.has(contact.id) &&
+      !originalRecipientEmails.has(contact.email.trim().toLowerCase())
+    );
+
     const assignmentResult = await prisma.assignedCampaigns.createMany({
-      data: matchedContacts.map((contact) => ({ campaignId: campaign.id, contactId: contact.id })),
+      data: contactsToAssign.map((contact) => ({ campaignId: campaign.id, contactId: contact.id })),
       skipDuplicates: true,
     });
 
     await prisma.campaign.update({ where: { id: campaign.id }, data: { isAssigned: true } });
 
-    const assignedTotal = await prisma.assignedCampaigns.count({ where: { campaignId: campaign.id } });
+    const assignedTotal = await prisma.assignedCampaigns.count({
+      where: { campaignId: campaign.id, deliveryStatus: 'PENDING' },
+    });
     const added = assignmentResult.count;
     if (assignedTotal > campaign.totalCount) {
       await prisma.campaign.update({ where: { id: campaign.id }, data: { totalCount: assignedTotal } });
