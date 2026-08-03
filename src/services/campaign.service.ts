@@ -1,7 +1,7 @@
 import prisma from '../config/database';
 import logger from '../utils/logger';
 import { parseJsonArray, sanitizeLog } from '../utils/helpers';
-import { appendUniqueTrimmedStrings, uniquePositiveIds, uniqueTrimmedStrings } from '../utils/collections';
+import { uniquePositiveIds, uniqueTrimmedStrings } from '../utils/collections';
 import { sendCampaign } from './email.service';
 import { createMissingContacts } from './contact.service';
 import { SendMode, MailAttachment } from '../types';
@@ -32,6 +32,7 @@ const CAMPAIGN_SELECT = {
   totalCount: true,
   recipients: true,
   attachments: true,   // included so the frontend can display attachment filenames
+  isAssigned: true,
   createdBy: true,
   createdAt: true,
   updatedAt: true,
@@ -150,9 +151,9 @@ export async function sendCampaignNow(campaignId: number) {
 }
 
 /**
- * Assigns contact emails as recipients on one or more existing campaigns.
- * Merges with existing recipients (case-insensitive dedupe) and updates totalCount.
- * RUNNING campaigns are skipped so an in-flight send is not mutated mid-run.
+ * Assigns contacts to one or more reusable campaigns.
+ * Assignment rows are the source of truth when a campaign is sent. A unique
+ * campaign/contact key makes repeated assignments idempotent.
  */
 export async function assignContactsToCampaigns(campaignIds: number[], emails: string[]) {
   if (!campaignIds.length) throw new Error('At least one campaign is required');
@@ -164,8 +165,18 @@ export async function assignContactsToCampaigns(campaignIds: number[], emails: s
   const uniqueIds = uniquePositiveIds(campaignIds);
   if (!uniqueIds.length) throw new Error('At least one valid campaign id is required');
 
-  const campaigns = await prisma.campaign.findMany({ where: { id: { in: uniqueIds } } });
+  const [campaigns, contacts] = await Promise.all([
+    prisma.campaign.findMany({ where: { id: { in: uniqueIds } } }),
+    prisma.contact.findMany({ where: { email: { in: normalizedEmails } }, select: { id: true, email: true } }),
+  ]);
   if (!campaigns.length) throw new Error('No campaigns found');
+  if (!contacts.length) throw new Error('No matching contacts found');
+
+  const contactByEmail = new Map(contacts.map((contact) => [contact.email.trim().toLowerCase(), contact]));
+  const matchedContacts = normalizedEmails
+    .map((email) => contactByEmail.get(email.toLowerCase()))
+    .filter((contact): contact is { id: number; email: string } => !!contact);
+  if (!matchedContacts.length) throw new Error('No matching contacts found');
 
   const results: {
     id: number;
@@ -189,31 +200,30 @@ export async function assignContactsToCampaigns(campaignIds: number[], emails: s
       continue;
     }
 
-    const existing = parseJsonArray<string>(campaign.recipients);
-    const merged = appendUniqueTrimmedStrings(existing, normalizedEmails);
+    const assignmentResult = await prisma.assignedCampaigns.createMany({
+      data: matchedContacts.map((contact) => ({ campaignId: campaign.id, contactId: contact.id })),
+      skipDuplicates: true,
+    });
 
-    const added = merged.length - existing.length;
-    if (added > 0) {
-      await prisma.campaign.update({
-        where: { id: campaign.id },
-        data: {
-          recipients: JSON.stringify(merged),
-          totalCount: merged.length,
-        },
-      });
+    await prisma.campaign.update({ where: { id: campaign.id }, data: { isAssigned: true } });
+
+    const assignedTotal = await prisma.assignedCampaigns.count({ where: { campaignId: campaign.id } });
+    const added = assignmentResult.count;
+    if (assignedTotal > campaign.totalCount) {
+      await prisma.campaign.update({ where: { id: campaign.id }, data: { totalCount: assignedTotal } });
     }
 
     results.push({
       id: campaign.id,
       name: campaign.name,
       added,
-      total: merged.length,
+      total: assignedTotal,
     });
   }
 
   const totalAdded = results.reduce((sum, r) => sum + r.added, 0);
   logger.info(
-    `Assigned contacts to ${results.length} campaign(s): ${totalAdded} new recipient link(s) ` +
+    `Queued contacts for ${results.length} campaign(s): ${totalAdded} new assignment(s) ` +
     `(emails: ${normalizedEmails.length})`
   );
 

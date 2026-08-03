@@ -77,7 +77,7 @@ export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
 export const retry = sendNow;
 
 /**
- * Assigns contact emails to one or more existing campaigns (merge recipients).
+ * Queues contacts for one or more existing campaigns.
  * Body: { campaignIds: number[], emails: string[] }
  */
 export async function assign(req: AuthRequest, res: Response): Promise<void> {
