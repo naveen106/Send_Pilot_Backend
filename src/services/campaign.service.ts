@@ -150,11 +150,16 @@ export async function createCampaign(data: CreateCampaignInput) {
 /**
  * Returns a paginated list of campaigns with parsed recipients.
  */
-export async function getCampaigns(page = 1, limit = 10) {
+export async function getCampaigns(page = 1, limit = 10, search?: string) {
   const skip = (page - 1) * limit;
+  // Apply the same filter to both queries so the returned page and total
+  // count describe the same name/subject search result set.
+  const where = search
+    ? { OR: [{ name: { contains: search } }, { subject: { contains: search } }] }
+    : undefined;
   const [rows, total] = await Promise.all([
-    prisma.campaign.findMany({ skip, take: limit, orderBy: { createdAt: 'desc' }, select: CAMPAIGN_SELECT }),
-    prisma.campaign.count(),
+    prisma.campaign.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' }, select: CAMPAIGN_SELECT }),
+    prisma.campaign.count({ where }),
   ]);
 
   return { campaigns: rows.map(deserializeCampaign), total, page, limit };

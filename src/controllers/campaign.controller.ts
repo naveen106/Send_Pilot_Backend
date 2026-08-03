@@ -49,7 +49,10 @@ export async function create(req: AuthRequest, res: Response): Promise<void> {
 /** Returns a paginated list of campaigns. */
 export async function getAll(req: AuthRequest, res: Response): Promise<void> {
   const { page, limit } = getPagination(req.query, 10);
-  const result = await campaignService.getCampaigns(page, limit);
+  // Keep search optional so existing campaign-list consumers retain the same
+  // endpoint behavior when no search term is supplied.
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
+  const result = await campaignService.getCampaigns(page, limit, search);
   sendSuccess(res, result);
 }
 
