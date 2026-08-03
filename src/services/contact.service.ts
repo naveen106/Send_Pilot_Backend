@@ -1,7 +1,12 @@
 import { parse } from 'csv-parse/sync';
 import * as XLSX from 'xlsx';
+import { PrismaClient } from '@prisma/client';
 import prisma from '../config/database';
 import logger from '../utils/logger';
+import { uniqueTrimmedStrings } from '../utils/collections';
+
+/** The minimum database surface required to create contacts. */
+type ContactWriter = Pick<PrismaClient, 'contact'>;
 
 function parseRecords(buffer: Buffer, mimetype: string): { email: string; name?: string }[] {
   if (mimetype === 'text/csv' || mimetype === 'application/csv') {
@@ -10,6 +15,23 @@ function parseRecords(buffer: Buffer, mimetype: string): { email: string; name?:
   const wb = XLSX.read(buffer, { type: 'buffer' });
   const rows = XLSX.utils.sheet_to_json<any>(wb.Sheets[wb.SheetNames[0]]);
   return rows.map((r: any) => ({ email: String(r.email || r.Email || '').toLowerCase(), name: r.name || r.Name }));
+}
+
+/**
+ * Creates contacts for email recipients that are not already in the address book.
+ * `skipDuplicates` makes the operation safe for repeated campaign recipients and
+ * concurrent requests. It accepts both the regular Prisma client and a transaction.
+ */
+export async function createMissingContacts( database: ContactWriter,  emails: string[]): Promise<number> {
+  const uniqueEmails = uniqueTrimmedStrings(emails);
+  if (uniqueEmails.length === 0) return 0;
+
+  const { count } = await database.contact.createMany({
+    data: uniqueEmails.map((email) => ({ email })),
+    skipDuplicates: true,
+  });
+
+  return count;
 }
 
 export async function importContacts(buffer: Buffer, mimetype: string) {

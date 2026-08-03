@@ -42,31 +42,49 @@ model User {
 }
 
 model Campaign {
-  id            Int            @id @default(autoincrement())
-  name          String
-  subject       String
-  htmlContent   String         @db.Text
-  status        CampaignStatus @default(DRAFT)
-  scheduledAt   DateTime?
-  totalCount    Int            @default(0)
-  createdBy     Int?
-  user          User?          @relation(fields: [createdBy], references: [id], onDelete: SetNull)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  recipients    String         @db.MediumText
-  attachments   String?        @db.MediumText
+  id                 Int                 @id @default(autoincrement())
+  name               String
+  subject            String
+  htmlContent        String              @db.Text
+  status             CampaignStatus      @default(DRAFT)
+  scheduledAt        DateTime?
+  totalCount         Int                 @default(0)
+  createdBy          Int?
+  user               User?               @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  recipients         String              @db.MediumText
+  attachments        String?             @db.MediumText
+  assignedCampaigns  assignedCampaigns[]
+  isAssigned         Boolean             @default(false)
 
   @@map("campaigns")
 }
 
 model Contact {
-  id         Int        @id @default(autoincrement())
-  email      String     @unique
-  name       String?
-  isActive   Boolean    @default(true)
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  id                 Int                 @id @default(autoincrement())
+  email              String              @unique
+  name               String?
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  assignedCampaigns  assignedCampaigns[]
+
   @@map("contacts")
 }
 
+// Join table: depends on Contact + Campaign (FK lives here).
+// Deleting a contact/campaign cascades and removes assignment rows.
+// Contact/Campaign do not depend on assignments — they only expose the back-relation Prisma requires.
 
+model assignedCampaigns {
+  id            Int       @id @default(autoincrement())
+  campaignId    Int
+  campaign      Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId     Int
+  contact       Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, contactId])
+
+  @@map("assignedCampaigns")
+}
