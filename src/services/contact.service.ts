@@ -85,10 +85,12 @@ export async function deleteContact(id: number) {
 }
 
 export async function bulkDeleteContacts(ids: number[]) {
-  const { count } = await prisma.contact.deleteMany({ where: { id: { in: ids } } });
+  const uniqueIds = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
+  const { count } = await prisma.contact.deleteMany({ where: { id: { in: uniqueIds } } });
   logger.info(`Bulk deleted ${count} contacts`);
   return { deleted: count };
 }
+
 
 export async function removeDuplicates() {
   const contacts = await prisma.contact.findMany({ orderBy: { createdAt: 'asc' } });
@@ -103,9 +105,7 @@ export async function removeDuplicates() {
     }
   }
 
-  if (toDelete.length > 0) {
-    await prisma.contact.deleteMany({ where: { id: { in: toDelete } } });
-  }
+  if (toDelete.length > 0) await prisma.contact.deleteMany({ where: { id: { in: toDelete } } });
 
   logger.info(`Removed ${toDelete.length} duplicate contacts`);
   return { removed: toDelete.length };
