@@ -189,16 +189,30 @@ export async function bulkDeleteCampaigns(ids: number[]) {
 }
 
 /**
- * Triggers an immediate send for an existing campaign.
- * Throws if the campaign is not found or already running.
+ * Triggers an existing campaign using the requested delivery mode.
+ * Scheduled sends are persisted as SCHEDULED and picked up by the scheduler;
+ * immediate and interval sends are dispatched in the background.
  */
-export async function sendCampaignNow(campaignId: number) {
+export async function sendCampaignNow(campaignId: number, mode: SendMode = 'immediate', scheduledAt?: Date) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error('Campaign not found');
   if (campaign.status === 'RUNNING') throw new Error('Campaign already running');
+  if (!['immediate', 'scheduled', 'interval'].includes(mode)) throw new Error('Invalid send mode');
 
-  logger.info(`Triggering instant send for campaign ${campaignId}`);
-  setImmediate(() => sendCampaign(campaignId, 'immediate'));
+  if (mode === 'scheduled') {
+    if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) throw new Error('A valid schedule date is required');
+    if (scheduledAt.getTime() <= Date.now()) throw new Error('Schedule date must be in the future');
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { status: 'SCHEDULED', scheduledAt },
+    });
+    logger.info(`Scheduled assigned campaign ${campaignId} for ${scheduledAt.toISOString()}`);
+    return { message: 'Campaign scheduled' };
+  }
+
+  logger.info(`Triggering ${mode} send for campaign ${campaignId}`);
+  setImmediate(() => sendCampaign(campaignId, mode));
   return { message: 'Campaign send initiated' };
 }
 

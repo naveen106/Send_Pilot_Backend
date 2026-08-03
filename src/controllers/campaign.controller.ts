@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { body } from 'express-validator';
-import { AuthRequest } from '../types';
+import { AuthRequest, SendMode } from '../types';
 import * as campaignService from '../services/campaign.service';
 import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
 
@@ -69,7 +69,10 @@ export async function getOne(req: AuthRequest, res: Response): Promise<void> {
  */
 export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const result = await campaignService.sendCampaignNow(parseInt(req.params.id));
+    const requestedMode = req.body?.sendMode;
+    const mode: SendMode = requestedMode || 'immediate';
+    const scheduledAt = req.body?.scheduledAt ? new Date(req.body.scheduledAt) : undefined;
+    const result = await campaignService.sendCampaignNow(parseInt(req.params.id), mode, scheduledAt);
     res.json({ success: true, ...result });
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));
