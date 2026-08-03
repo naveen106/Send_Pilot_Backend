@@ -54,6 +54,16 @@ const CAMPAIGN_SELECT = {
       },
     },
   },
+  deliveries: {
+    orderBy: { sentAt: 'desc' as const },
+    select: {
+      id: true,
+      recipientEmail: true,
+      subject: true,
+      sentAt: true,
+      contact: { select: { id: true, email: true, name: true } },
+    },
+  },
 } as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -77,12 +87,21 @@ function deserializeCampaign<T extends {
       createdAt: Date;
     };
   }>;
+  deliveries?: Array<{
+    id: number;
+    recipientEmail: string;
+    subject: string;
+    sentAt: Date;
+    contact: { id: number; email: string; name: string | null } | null;
+  }>;
 }>(row: T) {
-  const { recipients, attachments, assignedCampaigns, ...rest } = row;
+  const { recipients, attachments, assignedCampaigns, deliveries, ...rest } = row;
+
   return {
     ...rest,
     recipients: parseJsonArray<string>(recipients),
     attachments: parseJsonArray<MailAttachment>(attachments),
+
     assignedCampaigns: (assignedCampaigns ?? []).map((assignment) => ({
       id: assignment.id,
       contactId: assignment.contactId,
@@ -94,6 +113,14 @@ function deserializeCampaign<T extends {
         subject: row.subject,
         status: row.status,
       },
+    })),
+
+    sentDeliveries: (deliveries ?? []).map((delivery) => ({
+      id: delivery.id,
+      email: delivery.recipientEmail,
+      subject: delivery.subject,
+      sentAt: delivery.sentAt,
+      contact: delivery.contact,
     })),
   };
 }
