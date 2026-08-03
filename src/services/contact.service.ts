@@ -55,7 +55,7 @@ export async function importContacts(buffer: Buffer, mimetype: string) {
   }
 
   logger.info(`Import: ${imported} imported, ${skipped} skipped`);
-  return { imported, skipped, total: records.length };
+  return { imported, skipped, total: records.length, emails: Array.from(unique.keys()) };
 }
 
 export async function getContacts(page = 1, limit = 20, search?: string) {
