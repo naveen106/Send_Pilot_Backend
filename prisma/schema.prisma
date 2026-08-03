@@ -69,4 +69,11 @@ model Contact {
   @@map("contacts")
 }
 
-
+model assignedCampaigns{
+id
+campaignId    Int
+campaign      Campaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+contactId     Int
+contact       Contact?       @relation(fields: [contactId], references:[id], onDelete:SetNull)
+@@map("assignedCampaigns")
+}

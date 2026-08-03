@@ -57,10 +57,7 @@ async function checkAndPauseDailyLimit(
  * Updates campaign status to RUNNING → COMPLETED | FAILED | PAUSED.
  * Fire-and-forget safe: errors are caught and logged; status is always updated.
  */
-export async function sendCampaign(
-  campaignId: number,
-  mode: SendMode = 'immediate'
-): Promise<void> {
+export async function sendCampaign(campaignId: number, mode: SendMode = 'immediate'): Promise<void> {
   try {
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) throw new Error('Campaign not found');
