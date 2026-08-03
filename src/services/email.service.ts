@@ -86,9 +86,10 @@ async function recordDelivery(context: SendContext, email: string, assignment?: 
     });
 
     if (assignment) {
-      await transaction.assignedCampaigns.update({
+      // Assignment rows are the pending queue only. Once delivery succeeds,
+      // remove the queue row; EmailDelivery is the durable audit history.
+      await transaction.assignedCampaigns.delete({
         where: { id: assignment.id },
-        data: { deliveryStatus: 'SENT' },
       });
     }
   });
@@ -168,7 +169,7 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
 /**
  * Sends a campaign using immediate/scheduled batch delivery or interval delivery.
  * Assigned campaigns use only their assignedCampaigns queue. Successful queue
- * rows are marked SENT and every successful delivery is written to history;
+ * rows are removed and every successful delivery is written to history;
  * failed queue rows remain available for retry.
  */
 export async function sendCampaign(campaignId: number, mode: SendMode = 'immediate'): Promise<void> {

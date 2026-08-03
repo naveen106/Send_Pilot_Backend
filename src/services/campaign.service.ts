@@ -293,17 +293,21 @@ export async function assignContactsToCampaigns(campaignIds: number[], emails: s
       continue;
     }
 
-    const existingAssignments = await prisma.assignedCampaigns.findMany({
-      where: {
-        campaignId: campaign.id,
-        contactId: { in: matchedContacts.map((contact) => contact.id) },
-      },
-      select: { contactId: true, deliveryStatus: true },
-    });
+    const contactIds = matchedContacts.map((contact) => contact.id);
+    const [existingAssignments, sentDeliveries] = await Promise.all([
+      prisma.assignedCampaigns.findMany({
+        where: { campaignId: campaign.id, contactId: { in: contactIds } },
+        select: { contactId: true, deliveryStatus: true },
+      }),
+      prisma.emailDelivery.findMany({
+        where: { campaignId: campaign.id, contactId: { in: contactIds } },
+        select: { contactId: true },
+      }),
+    ]);
     const sentContactIds = new Set(
-      existingAssignments
-        .filter((assignment) => assignment.deliveryStatus === 'SENT')
-        .map((assignment) => assignment.contactId)
+      sentDeliveries
+        .map((delivery) => delivery.contactId)
+        .filter((contactId): contactId is number => contactId !== null)
     );
     const pendingContactIds = new Set(
       existingAssignments
