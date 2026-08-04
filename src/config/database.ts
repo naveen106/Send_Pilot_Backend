@@ -15,7 +15,7 @@ prisma.$on('warn', (e) => logger.warn(`Prisma warn: ${e.message}`));
 export async function validateDatabaseConnection(): Promise<void> {
   try {
     await prisma.$connect();
-    logger.info('Database connection established successfully');
+    logger.success('Database connection established successfully');
   } catch (error) {
     logger.error('Failed to connect to database', error);
     process.exit(1);

@@ -147,10 +147,10 @@ backend/
 │   │   └── index.ts       # Shared TS types: Role, JwtPayload, AuthRequest, SmtpConfig, ApiResponse
 │   ├── utils/
 │   │   ├── helpers.ts     # Pure utilities: parseJsonArray, randomDelay, sleep, sanitizeLog
-│   │   └── logger.ts      # Default winston logger + named emailLogger; DailyRotateFile transports
+│   │   └── logger.ts      # Structured date-folder logger + named emailLogger
 │   ├── app.ts             # Express setup: CORS, JSON body, requestLogger, routes, errorHandler
 │   └── index.ts           # Bootstrap: DB connect → ensureAdminExists → startScheduler → listen
-├── logs/                  # Auto-generated daily rotating log files
+├── logs/                  # Auto-generated date-folder log files
 ├── .env                   # Environment variables (not committed)
 ├── package.json
 ├── tsconfig.json
@@ -228,14 +228,32 @@ backend/
 
 ## Logging
 
-Log files are written to the `logs/` directory with daily rotation (max 30 days, 20 MB per file):
+Log files are written to date-specific folders with daily rotation (30 days, 20 MB per file):
+
+```text
+logs/
+└── 2026-08-04/
+    ├── app.log
+    ├── debug.log
+    ├── error.log
+    ├── email-sending.log
+    ├── info.log
+    ├── success.log
+    └── warn.log
+```
+
+Every entry uses the same structured format, including the timestamp, level, source
+location, message, and additional data:
+
+```text
+[2026-08-04 10:30:13] [SUCCESS] (src/index.ts:18) {"message":"Server running on http://localhost:5000","data":{}}
+```
+
+Set `LOG_LEVEL=debug` when debug entries are needed. Supported levels are `error`,
+`warn`, `success`, `info`, `http`, `verbose`, `debug`, and `silly`.
 
 | File | Content |
 |---|---|
-| `app-YYYY-MM-DD.log` | All application logs |
-| `error-YYYY-MM-DD.log` | Error-level logs only |
-| `warn-YYYY-MM-DD.log` | Warn-level logs only |
-| `api-YYYY-MM-DD.log` | HTTP request logs |
-| `email-sending-YYYY-MM-DD.log` | Email send/fail events |
-| `smtp-YYYY-MM-DD.log` | SMTP connection events |
-| `scheduler-YYYY-MM-DD.log` | Scheduler tick events |
+| `YYYY-MM-DD/app.log` | All application logs |
+| `YYYY-MM-DD/<level>.log` | Entries for one exact level, including `success`, `debug`, and `error` |
+| `YYYY-MM-DD/email-sending.log` | Email send/fail events |
