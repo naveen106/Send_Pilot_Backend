@@ -62,14 +62,14 @@ cp .env.example .env
 | `SMTP_SECURE` | Use TLS | `false` |
 | `SMTP_USER` | SMTP username / sender email | — |
 | `SMTP_PASS` | SMTP password / app password | — |
-| `DAILY_EMAIL_LIMIT` | Max emails sent per day | `500` |
-| `BATCH_SIZE` | Emails per batch | `10` |
-| `RANDOM_DELAY_MIN` | Min delay between emails (ms) | `1000` |
-| `RANDOM_DELAY_MAX` | Max delay between emails (ms) | `3000` |
 | `SCHEDULER_ENABLED` | Enable cron scheduler | `true` |
 | `FRONTEND_URL` | Frontend URL for password reset links | `http://localhost:3000` |
 | `LOG_LEVEL` | Winston log level | `info` |
 | `LOG_DIR` | Directory for log files | `logs` |
+
+Email delivery limits, batch size, and interval delays are maintained in
+`src/config/app.config.ts` because they are application defaults rather than
+secrets or deployment-specific settings.
 
 ---
 

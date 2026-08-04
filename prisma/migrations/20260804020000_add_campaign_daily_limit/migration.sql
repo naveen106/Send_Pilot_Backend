@@ -1,0 +1,1 @@
+ALTER TABLE `campaigns` ADD COLUMN `dailyLimit` INTEGER NOT NULL DEFAULT 50;

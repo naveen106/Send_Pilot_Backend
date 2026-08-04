@@ -22,6 +22,7 @@ export const campaignValidation = [
 export async function create(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { name, subject, htmlContent, scheduledAt, sendMode } = req.body;
+    const dailyLimit = req.body.dailyLimit === undefined ? undefined : Number(req.body.dailyLimit);
     const recipients: string[] = req.body['recipients'] ?? [];
     const files = (req.files as Express.Multer.File[]) ?? [];
 
@@ -36,6 +37,7 @@ export async function create(req: AuthRequest, res: Response): Promise<void> {
       recipients,
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
       sendMode: sendMode || 'immediate',
+      dailyLimit,
       createdBy: req.user!.userId,
       attachments,
     });
@@ -69,10 +71,10 @@ export async function getOne(req: AuthRequest, res: Response): Promise<void> {
  */
 export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const requestedMode = req.body?.sendMode;
-    const mode: SendMode = requestedMode || 'immediate';
+    const requestedMode = req.body?.sendMode as SendMode | undefined;
+    const requestedLimit = req.body?.dailyLimit === undefined ? undefined : Number(req.body.dailyLimit);
     const scheduledAt = req.body?.scheduledAt ? new Date(req.body.scheduledAt) : undefined;
-    const result = await campaignService.sendCampaignNow(parseInt(req.params.id), mode, scheduledAt);
+    const result = await campaignService.sendCampaignNow(parseInt(req.params.id), requestedMode, scheduledAt, requestedLimit);
     res.json({ success: true, ...result });
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));

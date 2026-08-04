@@ -47,8 +47,10 @@ model Campaign {
   subject            String
   htmlContent        String              @db.Text
   status             CampaignStatus      @default(DRAFT)
+  sendMode           String              @default("immediate")
   scheduledAt        DateTime?
   totalCount         Int                 @default(0)
+  dailyLimit         Int                 @default(50)
   createdBy          Int?
   user               User?               @relation(fields: [createdBy], references: [id], onDelete: SetNull)
   createdAt          DateTime            @default(now())
@@ -57,6 +59,7 @@ model Campaign {
   attachments        String?             @db.MediumText
   assignedCampaigns  assignedCampaigns[]
   deliveries         EmailDelivery[]
+  failures           EmailFailure[]
   isAssigned         Boolean             @default(false)
 
   @@map("campaigns")
@@ -71,6 +74,7 @@ model Contact {
   updatedAt          DateTime            @updatedAt
   assignedCampaigns  assignedCampaigns[]
   emailDeliveries    EmailDelivery[]
+  emailFailures      EmailFailure[]
   @@map("contacts")
 }
 
@@ -113,4 +117,23 @@ model EmailDelivery {
   @@index([campaignId, sentAt])
   @@index([contactId])
   @@map("emailDeliveries")
+}
+
+// Immutable history of failed delivery attempts. A later successful retry is
+// represented by EmailDelivery and removes the address from the active failed
+// view while preserving the original failure audit trail.
+model EmailFailure {
+  id              Int       @id @default(autoincrement())
+  campaignId      Int
+  campaign        Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId       Int?
+  contact         Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  recipientEmail  String    @db.VarChar(254)
+  reason          String    @db.Text
+  failedAt        DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+
+  @@index([campaignId, failedAt])
+  @@index([contactId])
+  @@map("emailFailures")
 }

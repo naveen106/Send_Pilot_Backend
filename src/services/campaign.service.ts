@@ -15,6 +15,7 @@ interface CreateCampaignInput {
   recipients: string[];
   scheduledAt?: Date;
   sendMode?: SendMode;
+  dailyLimit?: number;
   createdBy: number;
   attachments?: MailAttachment[];
 }
@@ -28,8 +29,10 @@ const CAMPAIGN_SELECT = {
   subject: true,
   htmlContent: true,
   status: true,
+  sendMode: true,
   scheduledAt: true,
   totalCount: true,
+  dailyLimit: true,
   recipients: true,
   attachments: true,   // included so the frontend can display attachment filenames
   isAssigned: true,
@@ -64,6 +67,16 @@ const CAMPAIGN_SELECT = {
       contact: { select: { id: true, email: true, name: true } },
     },
   },
+  failures: {
+    orderBy: { failedAt: 'desc' as const },
+    select: {
+      id: true,
+      recipientEmail: true,
+      reason: true,
+      failedAt: true,
+      contact: { select: { id: true, email: true, name: true } },
+    },
+  },
 } as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,8 +107,16 @@ function deserializeCampaign<T extends {
     sentAt: Date;
     contact: { id: number; email: string; name: string | null } | null;
   }>;
+  failures?: Array<{
+    id: number;
+    recipientEmail: string;
+    reason: string;
+    failedAt: Date;
+    contact: { id: number; email: string; name: string | null } | null;
+  }>;
 }>(row: T) {
-  const { recipients, attachments, assignedCampaigns, deliveries, ...rest } = row;
+  const { recipients, attachments, assignedCampaigns, deliveries, failures, ...rest } = row;
+  const sentEmails = new Set((deliveries ?? []).map((delivery) => delivery.recipientEmail.trim().toLowerCase()));
 
   return {
     ...rest,
@@ -122,6 +143,15 @@ function deserializeCampaign<T extends {
       sentAt: delivery.sentAt,
       contact: delivery.contact,
     })),
+    failedRecipients: [...new Map((failures ?? [])
+      .filter((failure) => !sentEmails.has(failure.recipientEmail.trim().toLowerCase()))
+      .map((failure) => [failure.recipientEmail.trim().toLowerCase(), {
+        id: failure.id,
+        email: failure.recipientEmail,
+        reason: failure.reason,
+        failedAt: failure.failedAt,
+        contact: failure.contact,
+      }])).values()],
   };
 }
 
@@ -138,6 +168,7 @@ export async function createCampaign(data: CreateCampaignInput) {
 
   const isScheduled = data.sendMode === 'scheduled' && !!data.scheduledAt;
   const mode: SendMode = data.sendMode || 'immediate';
+  const dailyLimit = validateDailyLimit(data.dailyLimit);
 
   const { campaign, contactsAdded } = await prisma.$transaction(async (transaction) => {
     const createdCampaign = await transaction.campaign.create({
@@ -147,7 +178,9 @@ export async function createCampaign(data: CreateCampaignInput) {
         htmlContent: data.htmlContent,
         scheduledAt: isScheduled ? data.scheduledAt! : null,
         status: isScheduled ? 'SCHEDULED' : 'DRAFT',
+        sendMode: mode,
         totalCount: data.recipients.length,
+        dailyLimit,
         recipients: JSON.stringify(data.recipients),
         attachments: JSON.stringify(data.attachments ?? []),
         createdBy: data.createdBy,
@@ -220,11 +253,13 @@ export async function bulkDeleteCampaigns(ids: number[]) {
  * Scheduled sends are persisted as SCHEDULED and picked up by the scheduler;
  * immediate and interval sends are dispatched in the background.
  */
-export async function sendCampaignNow(campaignId: number, mode: SendMode = 'immediate', scheduledAt?: Date) {
+export async function sendCampaignNow(campaignId: number, requestedMode?: SendMode, scheduledAt?: Date, requestedLimit?: number) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error('Campaign not found');
   if (campaign.status === 'RUNNING') throw new Error('Campaign already running');
+  const mode: SendMode = requestedMode ?? normalizeSendMode(campaign.sendMode);
   if (!['immediate', 'scheduled', 'interval'].includes(mode)) throw new Error('Invalid send mode');
+  const dailyLimit = validateDailyLimit(requestedLimit ?? campaign.dailyLimit);
 
   if (mode === 'scheduled') {
     if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) throw new Error('A valid schedule date is required');
@@ -232,15 +267,28 @@ export async function sendCampaignNow(campaignId: number, mode: SendMode = 'imme
 
     await prisma.campaign.update({
       where: { id: campaignId },
-      data: { status: 'SCHEDULED', scheduledAt },
+      data: { status: 'SCHEDULED', scheduledAt, dailyLimit, sendMode: mode },
     });
     logger.info(`Scheduled assigned campaign ${campaignId} for ${scheduledAt.toISOString()}`);
     return { message: 'Campaign scheduled' };
   }
 
-  logger.info(`Triggering ${mode} send for campaign ${campaignId}`);
+  await prisma.campaign.update({ where: { id: campaignId }, data: { dailyLimit, sendMode: mode } });
+  logger.info(`Triggering ${mode} send for campaign ${campaignId} with 24-hour limit ${dailyLimit}`);
   setImmediate(() => sendCampaign(campaignId, mode));
   return { message: 'Campaign send initiated' };
+}
+
+function validateDailyLimit(value?: number) {
+  const limit = value ?? 50;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new Error('24-hour email limit must be a whole number between 1 and 200');
+  }
+  return limit;
+}
+
+function normalizeSendMode(value?: string): SendMode {
+  return value === 'interval' || value === 'scheduled' || value === 'immediate' ? value : 'immediate';
 }
 
 /**

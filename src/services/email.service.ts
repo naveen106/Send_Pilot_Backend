@@ -1,13 +1,14 @@
 import prisma from '../config/database';
 import { createTransporter } from '../config/smtp';
+import { appConfig } from '../config/app.config';
 import { emailLogger } from '../utils/logger';
 import { parseJsonArray, randomDelay, sleep } from '../utils/helpers';
 import { SendMode, MailAttachment } from '../types';
 
-const DAILY_LIMIT = Math.min(parseInt(process.env.DAILY_EMAIL_LIMIT || '200'), 200);
-const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '10');
-const DELAY_MIN = parseInt(process.env.RANDOM_DELAY_MIN || '60000');
-const DELAY_MAX = parseInt(process.env.RANDOM_DELAY_MAX || '600000');
+const MAX_DAILY_LIMIT = Math.min(appConfig.email.dailyLimit, 200);
+const BATCH_SIZE = appConfig.email.batchSize;
+const DELAY_MIN = appConfig.email.randomDelayMinMs;
+const DELAY_MAX = appConfig.email.randomDelayMaxMs;
 
 type MailAttachments = ReturnType<typeof buildMailAttachments>;
 type Assignment = {
@@ -52,18 +53,32 @@ async function loadRecipients(campaignId: number, campaign: { isAssigned: boolea
     select: { id: true, contact: { select: { id: true, email: true } } },
   });
 
+  const assignedRecipients = assignments.map((assignment) => assignment.contact.email);
+  if (campaign.isAssigned) {
+    return { recipients: assignedRecipients, assignments: new Map(assignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])) };
+  }
+
+  // A non-assigned campaign has no queue rows, so delivery history is its
+  // pending-state source of truth and prevents duplicate sends on retry.
+  const sent = await prisma.emailDelivery.findMany({
+    where: { campaignId },
+    select: { recipientEmail: true },
+  });
+  const sentEmails = new Set(sent.map((delivery) => assignmentKey(delivery.recipientEmail)));
   return {
-    recipients: campaign.isAssigned
-      ? assignments.map((assignment) => assignment.contact.email)
-      : parseJsonArray<string>(campaign.recipients),
+    recipients: parseJsonArray<string>(campaign.recipients).filter((email) => !sentEmails.has(assignmentKey(email))),
     assignments: new Map(assignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])),
   };
 }
 
 async function pauseAtDailyLimit(campaignId: number, sent: number) {
-  if (sent < DAILY_LIMIT) return false;
+  const campaign = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { dailyLimit: true } });
+  const dailyLimit = Math.min(campaign?.dailyLimit ?? 50, MAX_DAILY_LIMIT);
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const sentInLast24Hours = await prisma.emailDelivery.count({ where: { campaignId, sentAt: { gte: since } } });
+  if (sent + sentInLast24Hours < dailyLimit) return false;
 
-  emailLogger.warn(`Daily limit of ${DAILY_LIMIT} reached. Pausing campaign ${campaignId}`);
+  emailLogger.warn(`24-hour limit of ${dailyLimit} reached. Pausing campaign ${campaignId}`);
   await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
   return true;
 }
@@ -104,9 +119,28 @@ async function sendOne(context: SendContext, email: string, prefix = '') {
     emailLogger.success(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
     return true;
   } catch (error) {
-    emailLogger.error(`${prefix}Failed to send to ${email}: ${(error as Error).message}`);
+    const reason = (error as Error).message;
+    await recordFailure(context, email, reason);
+    emailLogger.error(`${prefix}Failed to send to ${email}: ${reason}`);
     return false;
   }
+}
+
+async function recordFailure(context: SendContext, email: string, reason: string) {
+  const assignment = context.assignments.get(assignmentKey(email));
+  const contact = assignment?.contact ?? await prisma.contact.findUnique({
+    where: { email },
+    select: { id: true },
+  });
+
+  await prisma.emailFailure.create({
+    data: {
+      campaignId: context.campaignId,
+      contactId: contact?.id,
+      recipientEmail: email,
+      reason,
+    },
+  });
 }
 
 async function sendAtIntervals(context: SendContext, recipients: string[]): Promise<SendResult> {
@@ -186,6 +220,17 @@ export async function sendCampaign(campaignId: number, mode: SendMode = 'immedia
 
     await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'RUNNING' } });
 
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const sentInLast24Hours = await prisma.emailDelivery.count({ where: { campaignId, sentAt: { gte: since } } });
+    const dailyLimit = Math.min(campaign.dailyLimit ?? 50, MAX_DAILY_LIMIT);
+    const available = dailyLimit - sentInLast24Hours;
+    if (available <= 0) {
+      await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+      emailLogger.warn(`Campaign ${campaignId} has no 24-hour capacity remaining`);
+      return;
+    }
+    const sendableRecipients = recipients.slice(0, available);
+
     const context: SendContext = {
       campaignId,
       subject: campaign.subject,
@@ -195,10 +240,17 @@ export async function sendCampaign(campaignId: number, mode: SendMode = 'immedia
       assignments,
     };
     const result = mode === 'interval'
-      ? await sendAtIntervals(context, recipients)
-      : await sendInBatches(context, recipients);
+      ? await sendAtIntervals(context, sendableRecipients)
+      : await sendInBatches(context, sendableRecipients);
 
-    await updateFinishedStatus(campaignId, result, mode);
+    // Keep the campaign paused when the 24-hour capacity truncated the
+    // pending queue. The remaining recipients must be retried after capacity
+    // becomes available instead of being reported as completed.
+    await updateFinishedStatus(
+      campaignId,
+      sendableRecipients.length < recipients.length ? { ...result, paused: true } : result,
+      mode,
+    );
   } catch (error) {
     emailLogger.error(`Campaign ${campaignId} crashed: ${(error as Error).message}`);
     await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'FAILED' } }).catch(() => {});
