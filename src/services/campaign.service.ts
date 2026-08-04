@@ -253,7 +253,7 @@ export async function bulkDeleteCampaigns(ids: number[]) {
  * Scheduled sends are persisted as SCHEDULED and picked up by the scheduler;
  * immediate and interval sends are dispatched in the background.
  */
-export async function sendCampaignNow(campaignId: number, requestedMode?: SendMode, scheduledAt?: Date, requestedLimit?: number) {
+export async function sendCampaignNow(campaignId: number, requestedMode?: SendMode, scheduledAt?: Date, requestedLimit?: number, retryFailed = false) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error('Campaign not found');
   if (campaign.status === 'RUNNING') throw new Error('Campaign already running');
@@ -275,7 +275,7 @@ export async function sendCampaignNow(campaignId: number, requestedMode?: SendMo
 
   await prisma.campaign.update({ where: { id: campaignId }, data: { dailyLimit, sendMode: mode } });
   logger.info(`Triggering ${mode} send for campaign ${campaignId} with 24-hour limit ${dailyLimit}`);
-  setImmediate(() => sendCampaign(campaignId, mode));
+  setImmediate(() => sendCampaign(campaignId, mode, retryFailed));
   return { message: 'Campaign send initiated' };
 }
 

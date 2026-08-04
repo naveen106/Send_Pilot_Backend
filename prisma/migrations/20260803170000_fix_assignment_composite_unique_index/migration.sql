@@ -27,8 +27,21 @@ PREPARE migration_stmt FROM @sql;
 EXECUTE migration_stmt;
 DEALLOCATE PREPARE migration_stmt;
 
-CREATE UNIQUE INDEX `assignedCampaigns_campaignId_contactId_key`
-  ON `assignedCampaigns` (`campaignId`, `contactId`);
+-- Re-check after the conditional drop. On a clean replay, the previous
+-- migration may already have created this index. Keeping the CREATE guarded
+-- makes this migration safe to retry after a partial failure.
+SET @index_exists = (
+  SELECT COUNT(*) FROM information_schema.statistics
+  WHERE table_schema = DATABASE()
+    AND table_name = 'assignedCampaigns'
+    AND index_name = 'assignedCampaigns_campaignId_contactId_key'
+);
+SET @sql = IF(@index_exists = 0,
+  'CREATE UNIQUE INDEX `assignedCampaigns_campaignId_contactId_key` ON `assignedCampaigns` (`campaignId`, `contactId`)',
+  'SELECT 1');
+PREPARE migration_stmt FROM @sql;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
 
 SET @foreign_key_exists = (
   SELECT COUNT(*) FROM information_schema.table_constraints

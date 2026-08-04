@@ -1,5 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
+import { configureDatabaseUrl } from './database-url';
+
+configureDatabaseUrl();
 
 const prisma = new PrismaClient({
   log: [

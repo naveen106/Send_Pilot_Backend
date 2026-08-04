@@ -73,16 +73,20 @@ export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
   try {
     const requestedMode = req.body?.sendMode as SendMode | undefined;
     const requestedLimit = req.body?.dailyLimit === undefined ? undefined : Number(req.body.dailyLimit);
+    const retryFailed = req.body?.retryFailed === true;
     const scheduledAt = req.body?.scheduledAt ? new Date(req.body.scheduledAt) : undefined;
-    const result = await campaignService.sendCampaignNow(parseInt(req.params.id), requestedMode, scheduledAt, requestedLimit);
+    const result = await campaignService.sendCampaignNow(parseInt(req.params.id), requestedMode, scheduledAt, requestedLimit, retryFailed);
     res.json({ success: true, ...result });
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));
   }
 }
 
-/** Alias for sendNow — retry re-uses the same trigger logic. */
-export const retry = sendNow;
+/** Retries only recipients with recorded failures. */
+export async function retry(req: AuthRequest, res: Response): Promise<void> {
+  req.body = { ...(req.body ?? {}), retryFailed: true };
+  return sendNow(req, res);
+}
 
 /**
  * Queues contacts for one or more existing campaigns.
