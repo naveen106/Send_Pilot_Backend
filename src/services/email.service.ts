@@ -47,26 +47,36 @@ function assignmentKey(email: string) {
   return email.trim().toLowerCase();
 }
 
-async function loadRecipients(campaignId: number, campaign: { isAssigned: boolean; recipients: string }) {
+async function loadRecipients(campaignId: number, campaign: { isAssigned: boolean; recipients: string }, retryFailed: boolean) {
   const assignments = await prisma.assignedCampaigns.findMany({
     where: { campaignId, deliveryStatus: 'PENDING' },
     select: { id: true, contact: { select: { id: true, email: true } } },
   });
 
   const assignedRecipients = assignments.map((assignment) => assignment.contact.email);
+  const [failures, deliveries] = await Promise.all([
+    prisma.emailFailure.findMany({ where: { campaignId }, select: { recipientEmail: true } }),
+    prisma.emailDelivery.findMany({ where: { campaignId }, select: { recipientEmail: true } }),
+  ]);
+  const failedEmails = new Set(failures.map((failure) => assignmentKey(failure.recipientEmail)));
+  const sentEmails = new Set(deliveries.map((delivery) => assignmentKey(delivery.recipientEmail)));
+  const selectByRetryState = (email: string) => {
+    const key = assignmentKey(email);
+    if (sentEmails.has(key)) return false;
+    return retryFailed ? failedEmails.has(key) : !failedEmails.has(key);
+  };
   if (campaign.isAssigned) {
-    return { recipients: assignedRecipients, assignments: new Map(assignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])) };
+    const selectedAssignments = assignments.filter((assignment) => selectByRetryState(assignment.contact.email));
+    return {
+      recipients: selectedAssignments.map((assignment) => assignment.contact.email),
+      assignments: new Map(selectedAssignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])),
+    };
   }
 
   // A non-assigned campaign has no queue rows, so delivery history is its
   // pending-state source of truth and prevents duplicate sends on retry.
-  const sent = await prisma.emailDelivery.findMany({
-    where: { campaignId },
-    select: { recipientEmail: true },
-  });
-  const sentEmails = new Set(sent.map((delivery) => assignmentKey(delivery.recipientEmail)));
   return {
-    recipients: parseJsonArray<string>(campaign.recipients).filter((email) => !sentEmails.has(assignmentKey(email))),
+    recipients: parseJsonArray<string>(campaign.recipients).filter(selectByRetryState),
     assignments: new Map(assignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])),
   };
 }
@@ -206,12 +216,12 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
  * rows are removed and every successful delivery is written to history;
  * failed queue rows remain available for retry.
  */
-export async function sendCampaign(campaignId: number, mode: SendMode = 'immediate'): Promise<void> {
+export async function sendCampaign(campaignId: number, mode: SendMode = 'immediate', retryFailed = false): Promise<void> {
   try {
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) throw new Error('Campaign not found');
 
-    const { recipients, assignments } = await loadRecipients(campaignId, campaign);
+    const { recipients, assignments } = await loadRecipients(campaignId, campaign, retryFailed);
     if (recipients.length === 0) {
       emailLogger.info(`Campaign ${campaignId}: no recipients, marking COMPLETED`);
       await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'COMPLETED' } });
