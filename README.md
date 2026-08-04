@@ -52,7 +52,13 @@ cp .env.example .env
 | `ADMIN_EMAIL` | Initial admin account email | — |
 | `ADMIN_PASSWORD` | Initial admin account password | — |
 | `ADMIN_NAME` | Initial admin display name | `Admin` |
-| `DATABASE_URL` | MySQL connection string | `mysql://root:password@localhost:3306/bulk_email_sender` |
+| `DB_HOST` | MySQL/Aiven host | `localhost` |
+| `DB_PORT` | MySQL/Aiven port | `3306` |
+| `DB_NAME` | Application database name | `bulk_email_sender` |
+| `DB_USER` | Database username | `root` |
+| `DB_PASSWORD` | Database password | — |
+| `DB_SSL_MODE` | MySQL SSL mode | `REQUIRED` |
+| `DATABASE_URL` | Optional full connection string override | Generated from the database parts above |
 | `PORT` | Server port | `5000` |
 | `NODE_ENV` | Environment | `development` |
 | `JWT_SECRET` | Secret key for signing JWTs | — |

@@ -1,5 +1,8 @@
 import 'dotenv/config';
 import { defineConfig, env } from 'prisma/config';
+import { configureDatabaseUrl } from './src/config/database-url';
+
+configureDatabaseUrl();
 
 /** Central Prisma CLI configuration for schema, migrations, and seeding. */
 export default defineConfig({
