@@ -26,10 +26,8 @@ export async function ensureAdminExists(): Promise<void> {
   });
 
   logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  logger.info(`  Admin account created`);
-  logger.info(`  Email:    ${email}`);
-  logger.info(`  Password: ${password}`);
-  logger.info(`  Change this password after first login!`);
+  logger.success('Admin account created', { email });
+  logger.warn('The generated admin password must be changed after the first login');
   logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 }
 

@@ -101,7 +101,7 @@ async function sendOne(context: SendContext, email: string, prefix = '') {
       buildMailOptions(email, context.subject, context.html, context.attachments)
     );
     await recordDelivery(context, email, context.assignments.get(assignmentKey(email)));
-    emailLogger.info(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
+    emailLogger.success(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
     return true;
   } catch (error) {
     emailLogger.error(`${prefix}Failed to send to ${email}: ${(error as Error).message}`);
