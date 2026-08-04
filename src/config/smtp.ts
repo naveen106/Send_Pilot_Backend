@@ -19,6 +19,9 @@ export function createTransporter(config?: SmtpConfig) {
     secure: smtp.secure,
     auth: { user: smtp.user, pass: smtp.pass },
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 30_000,
+    greetingTimeout: 30_000,
+    socketTimeout: 60_000,
   });
 }
 
