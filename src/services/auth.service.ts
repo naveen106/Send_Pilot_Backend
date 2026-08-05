@@ -7,28 +7,43 @@ import logger from '../utils/logger';
 import { JwtPayload, Role } from '../types';
 
 export async function ensureAdminExists(): Promise<void> {
-  const email = process.env.SMTP_USER;
+  const email = process.env.ADMIN_EMAIL || process.env.SMTP_USER;
   if (!email) {
-    logger.warn('SMTP_USER not set — skipping admin auto-creation');
+    logger.warn('ADMIN_EMAIL (or SMTP_USER) not set — skipping admin auto-creation');
     return;
   }
 
+  const resetPassword = process.env.ADMIN_RESET_PASSWORD === 'true';
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    logger.info(`Admin account already exists: ${email}`);
+    if (!resetPassword) {
+      logger.info(`Admin account already exists: ${email}`);
+      return;
+    }
+
+    const password = crypto.randomBytes(18).toString('base64url');
+    const hashed = await bcrypt.hash(password, 12);
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: { password: hashed, role: 'ADMIN', isActive: true, resetToken: null, resetTokenExpiry: null },
+    });
+
+    logger.warn(`Admin password reset for ${email}. Change it after first login.`);
+    logger.warn(`ADMIN LOGIN — email: ${email} | password: ${password}`);
     return;
   }
 
-  const password = crypto.randomBytes(12).toString('base64url');
+  // Never use a placeholder/configured password for runtime auto-creation.
+  // Generate it here so the value printed to the console is the real login password.
+  const password = crypto.randomBytes(18).toString('base64url');
   const hashed = await bcrypt.hash(password, 12);
   await prisma.user.create({
     data: { email, password: hashed, name: 'Admin', role: 'ADMIN' },
   });
 
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   logger.success('Admin account created', { email });
-  logger.warn('The generated admin password must be changed after the first login');
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  logger.warn(`ADMIN LOGIN — email: ${email} | password: ${password}`);
+  logger.warn('Change the admin password after the first login');
 }
 
 export async function loginUser(email: string, password: string) {
