@@ -10,16 +10,28 @@ export function getDatabaseUrl(): string {
   const password = process.env.DB_PASSWORD;
   const sslMode = process.env.DB_SSL_MODE || 'REQUIRED';
 
-  // Prefer separated fields when they are configured. This prevents an old
-  // DATABASE_URL from silently overriding the current database settings.
-  if (![host, database, username, password].some((value) => !value)) {
-    return `mysql://${encodeURIComponent(username!)}:${encodeURIComponent(password!)}`
+  // Keep the pool below the database plan's connection ceiling and allow
+  // queued requests a little longer during bursts of campaign activity.
+  const connectionLimit = process.env.PRISMA_CONNECTION_LIMIT || '4';
+  const poolTimeout = process.env.PRISMA_POOL_TIMEOUT || '15';
+
+  const addPoolOptions = (url: string) => {
+    const parsed = new URL(url);
+    parsed.searchParams.set('connection_limit', connectionLimit);
+    parsed.searchParams.set('pool_timeout', poolTimeout);
+    return parsed.toString();
+  };
+
+  // Prefer separated fields when they are configured.  
+  if (host && database && username && password) {
+    return addPoolOptions(`mysql://${encodeURIComponent(username!)}:${encodeURIComponent(password!)}`
       + `@${host}:${port}/${encodeURIComponent(database!)}`
-      + `?ssl-mode=${encodeURIComponent(sslMode)}`;
+      + `?ssl-mode=${encodeURIComponent(sslMode)}`);
   }
 
+  //connect to local db through DATABASE_URL if previous if{} didn't execute
   if (process.env.DATABASE_URL) {
-    return process.env.DATABASE_URL;
+    return addPoolOptions(process.env.DATABASE_URL);
   }
 
   const missing = [
