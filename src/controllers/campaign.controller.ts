@@ -22,7 +22,6 @@ export const campaignValidation = [
 /** Creates a new campaign and kicks off sending (or schedules it). */
 export async function create(req: AuthRequest, res: Response): Promise<void> {
   try {
-    // console.log('[POST /api/campaigns] body:', req.body);
     const { name, subject, htmlContent, scheduledAt, sendMode } = req.body;
     const dailyLimit = req.body.dailyLimit === undefined ? undefined : Number(req.body.dailyLimit);
     const recipients: string[] = req.body['recipients'] ?? [];
@@ -73,7 +72,6 @@ export async function getOne(req: AuthRequest, res: Response): Promise<void> {
  */
 export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
   try {
-    console.log(`[POST /api/campaigns/${req.params.id}/send] body:`, req.body);
     const requestedMode = req.body?.sendMode as SendMode | undefined;
     const requestedLimit = req.body?.dailyLimit === undefined ? undefined : Number(req.body.dailyLimit);
     const retryFailed = req.body?.retryFailed === true;

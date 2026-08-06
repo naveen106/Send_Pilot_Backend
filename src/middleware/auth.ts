@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthRequest, JwtPayload } from '../types';
+import { getJwtSecret } from '../config/env';
 import logger from '../utils/logger';
 
 export function authenticate(req: AuthRequest, res: Response, next: NextFunction): void {
@@ -14,7 +15,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as JwtPayload;
+    const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload;
     req.user = decoded;
     next();
   } catch (error) {

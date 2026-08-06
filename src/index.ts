@@ -3,6 +3,7 @@ dotenv.config();
 
 import app from './app';
 import { validateDatabaseConnection } from './config/database';
+import { validateEnvironment } from './config/env';
 import { ensureAdminExists } from './services/auth.service';
 import { startScheduler } from './services/scheduler.service';
 import logger from './utils/logger';
@@ -10,6 +11,7 @@ import logger from './utils/logger';
 const PORT = parseInt(process.env.PORT || '5000');
 
 async function bootstrap() {
+  validateEnvironment();
   await validateDatabaseConnection();
   await ensureAdminExists();
   startScheduler();
