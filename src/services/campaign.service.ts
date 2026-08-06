@@ -163,10 +163,11 @@ function deserializeCampaign<T extends {
  * If not scheduled, kicks off sending immediately via setImmediate (fire-and-forget).
  */
 export async function createCampaign(data: CreateCampaignInput) {
-  if (!data.recipients || data.recipients.length === 0)
-    throw new Error('At least one recipient is required');
+  // Empty campaigns remain drafts until contacts are assigned later.
+  const recipients = Array.isArray(data.recipients) ? data.recipients : [];
 
-  const isScheduled = data.sendMode === 'scheduled' && !!data.scheduledAt;
+  const hasRecipients = recipients.length > 0;
+  const isScheduled = hasRecipients && data.sendMode === 'scheduled' && !!data.scheduledAt;
   const mode: SendMode = data.sendMode || 'immediate';
   const dailyLimit = validateDailyLimit(data.dailyLimit);
 
@@ -179,15 +180,15 @@ export async function createCampaign(data: CreateCampaignInput) {
         scheduledAt: isScheduled ? data.scheduledAt! : null,
         status: isScheduled ? 'SCHEDULED' : 'DRAFT',
         sendMode: mode,
-        totalCount: data.recipients.length,
+        totalCount: recipients.length,
         dailyLimit,
-        recipients: JSON.stringify(data.recipients),
+        recipients: JSON.stringify(recipients),
         attachments: JSON.stringify(data.attachments ?? []),
         createdBy: data.createdBy,
       },
     });
 
-    const addedContacts = await createMissingContacts(transaction, data.recipients);
+    const addedContacts = await createMissingContacts(transaction, recipients);
     return { campaign: createdCampaign, contactsAdded: addedContacts };
   });
 
@@ -195,7 +196,7 @@ export async function createCampaign(data: CreateCampaignInput) {
   logger.info(`Campaign created: ${sanitizeLog(campaign.name)} [id: ${campaign.id}] mode: ${mode}`);
   logger.info(`Campaign ${campaign.id}: added ${contactsAdded} recipient contact(s)`);
 
-  if (!isScheduled) {
+  if (hasRecipients && !isScheduled) {
     // Fire-and-forget — HTTP response returns immediately
     setImmediate(() =>
       sendCampaign(campaign.id, mode).catch((err) =>
@@ -204,7 +205,7 @@ export async function createCampaign(data: CreateCampaignInput) {
     );
   }
 
-  return { ...campaign, recipients: data.recipients };
+  return { ...campaign, recipients };
 }
 
 /**

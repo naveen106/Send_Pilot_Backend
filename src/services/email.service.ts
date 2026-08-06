@@ -121,19 +121,43 @@ async function recordDelivery(context: SendContext, email: string, assignment?: 
 }
 
 async function sendOne(context: SendContext, email: string, prefix = '') {
+  let smtpAccepted = false;
+
   try {
     await context.transporter.sendMail(
       buildMailOptions(email, context.subject, context.html, context.attachments)
     );
-    await recordDelivery(context, email, context.assignments.get(assignmentKey(email)));
-    emailLogger.success(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
-    return true;
+    // SMTP acceptance is the delivery boundary. From this point onward, a
+    // database error must not turn an accepted email into a false failure.
+    smtpAccepted = true;
   } catch (error) {
     const reason = (error as Error).message;
-    await recordFailure(context, email, reason);
+    try {
+      await recordFailure(context, email, reason);
+    } catch (persistenceError) {
+      emailLogger.error(
+        `${prefix}Failed to record SMTP failure for ${email}: ${(persistenceError as Error).message} `
+        + `(original SMTP error: ${reason})`
+      );
+    }
     emailLogger.error(`${prefix}Failed to send to ${email}: ${reason}`);
     return false;
   }
+
+  try {
+    await recordDelivery(context, email, context.assignments.get(assignmentKey(email)));
+  } catch (error) {
+    // If we reach here, it means the message was accepted by SMTP, so count it as sent.
+    emailLogger.error(
+      `${prefix}SMTP accepted ${email}, but delivery history could not be saved: ${(error as Error).message}`
+    );
+  }
+
+  if (smtpAccepted) {
+    emailLogger.success(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
+    return true;
+  }
+  return false;
 }
 
 async function recordFailure(context: SendContext, email: string, reason: string) {
