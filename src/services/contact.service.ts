@@ -1,5 +1,5 @@
 import { parse } from 'csv-parse/sync';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { PrismaClient } from '@prisma/client';
 import prisma from '../config/database';
 import logger from '../utils/logger';
@@ -8,13 +8,29 @@ import { uniqueTrimmedStrings } from '../utils/collections';
 /** The minimum database surface required to create contacts. */
 type ContactWriter = Pick<PrismaClient, 'contact'>;
 
-function parseRecords(buffer: Buffer, mimetype: string): { email: string; name?: string }[] {
+async function parseRecords(buffer: Buffer, mimetype: string): Promise<{ email: string; name?: string }[]> {
   if (mimetype === 'text/csv' || mimetype === 'application/csv') {
     return parse(buffer, { columns: true, skip_empty_lines: true, trim: true });
   }
-  const wb = XLSX.read(buffer, { type: 'buffer' });
-  const rows = XLSX.utils.sheet_to_json<any>(wb.Sheets[wb.SheetNames[0]]);
-  return rows.map((r: any) => ({ email: String(r.email || r.Email || '').toLowerCase(), name: r.name || r.Name }));
+
+  const workbook = new ExcelJS.Workbook();
+  // ExcelJS currently types its Buffer parameter against an older Node Buffer
+  // declaration; the runtime accepts the request buffer directly.
+  await workbook.xlsx.load(buffer as any);
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet || worksheet.rowCount < 2) return [];
+
+  const headerRow = worksheet.getRow(1);
+  const headers = Array.from({ length: headerRow.cellCount }, (_, index) =>
+    headerRow.getCell(index + 1).text.trim().toLowerCase()
+  );
+
+  return Array.from({ length: worksheet.rowCount - 1 }, (_, index) => {
+    const row = worksheet.getRow(index + 2);
+    const values = headers.map((_, columnIndex) => row.getCell(columnIndex + 1).text.trim());
+    const record = Object.fromEntries(headers.map((header, columnIndex) => [header, values[columnIndex]]));
+    return { email: String(record.email || '').toLowerCase(), name: record.name || undefined };
+  });
 }
 
 /**
@@ -35,7 +51,7 @@ export async function createMissingContacts( database: ContactWriter,  emails: s
 }
 
 export async function importContacts(buffer: Buffer, mimetype: string) {
-  const records = parseRecords(buffer, mimetype).filter((r) => r.email);
+  const records = (await parseRecords(buffer, mimetype)).filter((r) => r.email);
 
   const unique = new Map<string, { email: string; name?: string }>();
   for (const r of records) {

@@ -1,4 +1,6 @@
-FROM node:20-alpine AS build
+ARG NODE_VERSION=24.18.0
+
+FROM node:${NODE_VERSION}-alpine AS build
 
 WORKDIR /app
 
@@ -14,7 +16,7 @@ COPY src ./src
 ENV DATABASE_URL=mysql://build:build@localhost:3306/bulk_email_sender
 RUN npm run prisma:generate && npm run build
 
-FROM node:20-alpine AS runtime
+FROM node:${NODE_VERSION}-alpine AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app
