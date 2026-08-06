@@ -7,6 +7,7 @@ import { validate } from '../middleware/validation';
 import * as authCtrl from '../controllers/auth.controller';
 import * as campaignCtrl from '../controllers/campaign.controller';
 import * as contactCtrl from '../controllers/contact.controller';
+import * as dashboardCtrl from '../controllers/dashboard.controller';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -18,7 +19,7 @@ router.post('/auth/reset-password', body('token').notEmpty(), body('password').i
 router.get('/auth/me', authenticate, authCtrl.getMe);
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
-router.get('/dashboard', authenticate, campaignCtrl.getDashboard);
+router.get('/dashboard', authenticate, dashboardCtrl.getStats);
 
 // ─── Campaigns ───────────────────────────────────────────────────────────────
 router.get('/campaigns', authenticate, campaignCtrl.getAll);

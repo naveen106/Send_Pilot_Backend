@@ -139,8 +139,3 @@ export async function bulkRemove(req: AuthRequest, res: Response): Promise<void>
   }
 }
 
-/** Returns aggregated dashboard statistics. */
-export async function getDashboard(_req: AuthRequest, res: Response): Promise<void> {
-  const stats = await campaignService.getDashboardStats();
-  sendSuccess(res, stats);
-}
