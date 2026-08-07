@@ -31,6 +31,8 @@ interface SendResult {
   paused: boolean;
 }
 
+type MailResponse = Awaited<ReturnType<SendContext['transporter']['sendMail']>>;
+
 function buildMailAttachments(attachments: MailAttachment[]) {
   return attachments.map((attachment) => ({
     filename: attachment.filename,
@@ -43,8 +45,34 @@ function buildMailOptions(to: string, subject: string, html: string, attachments
   return { from: process.env.SMTP_USER, to, subject, html, attachments };
 }
 
-function assignmentKey(email: string) {
+function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function getRecipientAddress(recipient: string | { address?: string }) {
+  return typeof recipient === 'string' ? recipient : recipient.address ?? '';
+}
+
+function wasAcceptedBySmtp(mailResponse: MailResponse, email: string) {
+  const key = normalizeEmail(email);
+  const accepted = mailResponse.accepted?.some(
+    (recipient) => normalizeEmail(getRecipientAddress(recipient)) === key,
+  );
+  const rejected = mailResponse.rejected?.some(
+    (recipient) => normalizeEmail(getRecipientAddress(recipient)) === key,
+  );
+
+  return accepted && !rejected;
+}
+
+function smtpRejectionReason(mailResponse: MailResponse, email: string) {
+  const wasRejected = mailResponse.rejected?.some(
+    (recipient) => normalizeEmail(getRecipientAddress(recipient)) === normalizeEmail(email),
+  );
+
+  return wasRejected
+    ? `Recipient rejected by SMTP server (response: ${mailResponse.response ?? 'no response'})`
+    : `Recipient not accepted by SMTP server (response: ${mailResponse.response ?? 'no response'})`;
 }
 
 async function loadRecipients(campaignId: number, campaign: { isAssigned: boolean; recipients: string }, retryFailed: boolean) {
@@ -58,10 +86,10 @@ async function loadRecipients(campaignId: number, campaign: { isAssigned: boolea
     prisma.emailFailure.findMany({ where: { campaignId }, select: { recipientEmail: true } }),
     prisma.emailDelivery.findMany({ where: { campaignId }, select: { recipientEmail: true } }),
   ]);
-  const failedEmails = new Set(failures.map((failure) => assignmentKey(failure.recipientEmail)));
-  const sentEmails = new Set(deliveries.map((delivery) => assignmentKey(delivery.recipientEmail)));
+  const failedEmails = new Set(failures.map((failure) => normalizeEmail(failure.recipientEmail)));
+  const sentEmails = new Set(deliveries.map((delivery) => normalizeEmail(delivery.recipientEmail)));
   const selectByRetryState = (email: string) => {
-    const key = assignmentKey(email);
+    const key = normalizeEmail(email);
     if (sentEmails.has(key)) return false;
     return retryFailed ? failedEmails.has(key) : !failedEmails.has(key);
   };
@@ -69,7 +97,7 @@ async function loadRecipients(campaignId: number, campaign: { isAssigned: boolea
     const selectedAssignments = assignments.filter((assignment) => selectByRetryState(assignment.contact.email));
     return {
       recipients: selectedAssignments.map((assignment) => assignment.contact.email),
-      assignments: new Map(selectedAssignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])),
+      assignments: new Map(selectedAssignments.map((assignment) => [normalizeEmail(assignment.contact.email), assignment])),
     };
   }
 
@@ -77,7 +105,7 @@ async function loadRecipients(campaignId: number, campaign: { isAssigned: boolea
   // pending-state source of truth and prevents duplicate sends on retry.
   return {
     recipients: parseJsonArray<string>(campaign.recipients).filter(selectByRetryState),
-    assignments: new Map(assignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])),
+    assignments: new Map(assignments.map((assignment) => [normalizeEmail(assignment.contact.email), assignment])),
   };
 }
 
@@ -121,47 +149,58 @@ async function recordDelivery(context: SendContext, email: string, assignment?: 
 }
 
 async function sendOne(context: SendContext, email: string, prefix = '') {
-  let smtpAccepted = false;
+  let mailResponse: MailResponse;
 
   try {
-    await context.transporter.sendMail(
+    mailResponse = await context.transporter.sendMail(
       buildMailOptions(email, context.subject, context.html, context.attachments)
     );
-    // SMTP acceptance is the delivery boundary. From this point onward, a
-    // database error must not turn an accepted email into a false failure.
-    smtpAccepted = true;
   } catch (error) {
     const reason = (error as Error).message;
-    try {
-      await recordFailure(context, email, reason);
-    } catch (persistenceError) {
-      emailLogger.error(
-        `${prefix}Failed to record SMTP failure for ${email}: ${(persistenceError as Error).message} `
-        + `(original SMTP error: ${reason})`
-      );
-    }
-    emailLogger.error(`${prefix}Failed to send to ${email}: ${reason}`);
+    await recordSendFailure(context, email, reason, prefix, 'SMTP failure');
     return false;
   }
 
+  if (!wasAcceptedBySmtp(mailResponse, email)) {
+    await recordSendFailure(context, email, smtpRejectionReason(mailResponse, email), prefix, 'SMTP rejection');
+    return false;
+  }
+
+  const assignment = context.assignments.get(normalizeEmail(email));
   try {
-    await recordDelivery(context, email, context.assignments.get(assignmentKey(email)));
+    await recordDelivery(context, email, assignment);
   } catch (error) {
-    // If we reach here, it means the message was accepted by SMTP, so count it as sent.
+    // The message was accepted by SMTP, so count it as sent even if the
+    // delivery history could not be saved.
     emailLogger.error(
       `${prefix}SMTP accepted ${email}, but delivery history could not be saved: ${(error as Error).message}`
     );
   }
 
-  if (smtpAccepted) {
-    emailLogger.success(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
-    return true;
+  emailLogger.success(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
+  return true;
+}
+
+async function recordSendFailure(
+  context: SendContext,
+  email: string,
+  reason: string,
+  prefix: string,
+  failureType: string,
+) {
+  try {
+    await recordFailure(context, email, reason);
+  } catch (persistenceError) {
+    emailLogger.error(
+      `${prefix}Failed to record ${failureType.toLowerCase()} for ${email}: `
+      + `${(persistenceError as Error).message} (original reason: ${reason})`
+    );
   }
-  return false;
+  emailLogger.error(`${prefix}Failed to send to ${email}: ${reason}`);
 }
 
 async function recordFailure(context: SendContext, email: string, reason: string) {
-  const assignment = context.assignments.get(assignmentKey(email));
+  const assignment = context.assignments.get(normalizeEmail(email));
   const contact = assignment?.contact ?? await prisma.contact.findUnique({
     where: { email },
     select: { id: true },
