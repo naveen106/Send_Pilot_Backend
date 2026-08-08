@@ -3,10 +3,10 @@ import { createTransporter } from '../config/smtp';
 import { appConfig } from '../config/app.config';
 import { emailLogger } from '../utils/logger';
 import { parseJsonArray, randomDelay, sleep } from '../utils/helpers';
-import { SendMode, MailAttachment } from '../types';
+import { SEND_MODES, SendMode, MailAttachment } from '../types';
+import { AssignmentDeliveryStatus, CampaignPauseReason, CampaignStatus } from '@prisma/client';
 
-const MAX_DAILY_LIMIT = Math.min(appConfig.email.dailyLimit, 200);
-const BATCH_SIZE = appConfig.email.batchSize;
+const GLOBAL_DAILY_LIMIT = appConfig.email.globalDailyLimit;
 const DELAY_MIN = appConfig.email.randomDelayMinMs;
 const DELAY_MAX = appConfig.email.randomDelayMaxMs;
 
@@ -18,6 +18,7 @@ type Assignment = {
 
 interface SendContext {
   campaignId: number;
+  dailyLimit: number;
   subject: string;
   html: string;
   attachments: MailAttachments;
@@ -31,6 +32,10 @@ interface SendResult {
   paused: boolean;
 }
 
+type SendOutcome = 'sent' | 'failed' | 'limit' | 'busy' | 'pending';
+
+type MailResponse = Awaited<ReturnType<SendContext['transporter']['sendMail']>>;
+
 function buildMailAttachments(attachments: MailAttachment[]) {
   return attachments.map((attachment) => ({
     filename: attachment.filename,
@@ -43,33 +48,65 @@ function buildMailOptions(to: string, subject: string, html: string, attachments
   return { from: process.env.SMTP_USER, to, subject, html, attachments };
 }
 
-function assignmentKey(email: string) {
+function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function getRecipientAddress(recipient: string | { address?: string }) {
+  return typeof recipient === 'string' ? recipient : recipient.address ?? '';
+}
+
+function wasAcceptedBySmtp(mailResponse: MailResponse, email: string) {
+  const key = normalizeEmail(email);
+  const accepted = mailResponse.accepted?.some(
+    (recipient) => normalizeEmail(getRecipientAddress(recipient)) === key,
+  );
+  const rejected = mailResponse.rejected?.some(
+    (recipient) => normalizeEmail(getRecipientAddress(recipient)) === key,
+  );
+
+  return accepted && !rejected;
+}
+
+function smtpRejectionReason(mailResponse: MailResponse, email: string) {
+  const wasRejected = mailResponse.rejected?.some(
+    (recipient) => normalizeEmail(getRecipientAddress(recipient)) === normalizeEmail(email),
+  );
+
+  return wasRejected
+    ? `Recipient rejected by SMTP server (response: ${mailResponse.response ?? 'no response'})`
+    : `Recipient not accepted by SMTP server (response: ${mailResponse.response ?? 'no response'})`;
 }
 
 async function loadRecipients(campaignId: number, campaign: { isAssigned: boolean; recipients: string }, retryFailed: boolean) {
   const assignments = await prisma.assignedCampaigns.findMany({
-    where: { campaignId, deliveryStatus: 'PENDING' },
+    where: { campaignId, deliveryStatus: AssignmentDeliveryStatus.PENDING },
     select: { id: true, contact: { select: { id: true, email: true } } },
   });
 
-  const assignedRecipients = assignments.map((assignment) => assignment.contact.email);
-  const [failures, deliveries] = await Promise.all([
+  const [failures, reservations] = await Promise.all([
     prisma.emailFailure.findMany({ where: { campaignId }, select: { recipientEmail: true } }),
-    prisma.emailDelivery.findMany({ where: { campaignId }, select: { recipientEmail: true } }),
+    prisma.emailSendReservation.findMany({
+      where: { campaignId, reservedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+      select: { recipientEmail: true },
+    }),
   ]);
-  const failedEmails = new Set(failures.map((failure) => assignmentKey(failure.recipientEmail)));
-  const sentEmails = new Set(deliveries.map((delivery) => assignmentKey(delivery.recipientEmail)));
+  const failedEmails = new Set(failures.map((failure) => normalizeEmail(failure.recipientEmail)));
+  const reservedEmails = new Set(reservations.map((reservation) => normalizeEmail(reservation.recipientEmail)));
   const selectByRetryState = (email: string) => {
-    const key = assignmentKey(email);
-    if (sentEmails.has(key)) return false;
+    const key = normalizeEmail(email);
+    // A previous successful send does not exclude this recipient. The same
+    // contact may receive the campaign again; only an active send reservation
+    // prevents concurrent duplicate sends.
+    if (reservedEmails.has(key)) return false;
     return retryFailed ? failedEmails.has(key) : !failedEmails.has(key);
   };
   if (campaign.isAssigned) {
     const selectedAssignments = assignments.filter((assignment) => selectByRetryState(assignment.contact.email));
     return {
       recipients: selectedAssignments.map((assignment) => assignment.contact.email),
-      assignments: new Map(selectedAssignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])),
+      assignments: new Map(selectedAssignments.map((assignment) => [normalizeEmail(assignment.contact.email), assignment])),
+      hasActiveReservations: reservations.length > 0,
     };
   }
 
@@ -77,23 +114,53 @@ async function loadRecipients(campaignId: number, campaign: { isAssigned: boolea
   // pending-state source of truth and prevents duplicate sends on retry.
   return {
     recipients: parseJsonArray<string>(campaign.recipients).filter(selectByRetryState),
-    assignments: new Map(assignments.map((assignment) => [assignmentKey(assignment.contact.email), assignment])),
+    assignments: new Map(assignments.map((assignment) => [normalizeEmail(assignment.contact.email), assignment])),
+    hasActiveReservations: reservations.length > 0,
   };
 }
 
-async function pauseAtDailyLimit(campaignId: number, sent: number) {
-  const campaign = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { dailyLimit: true } });
-  const dailyLimit = Math.min(campaign?.dailyLimit ?? 50, MAX_DAILY_LIMIT);
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const sentInLast24Hours = await prisma.emailDelivery.count({ where: { campaignId, sentAt: { gte: since } } });
-  if (sent + sentInLast24Hours < dailyLimit) return false;
+class DailyLimitReachedError extends Error {}
+class RecipientAlreadyReservedError extends Error {}
 
-  emailLogger.warn(`24-hour limit of ${dailyLimit} reached. Pausing campaign ${campaignId}`);
-  await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
-  return true;
+// Reserves an email slot and checks the daily limit and duplicate reservations.
+// If any of these conditions are not met, it throws an error.
+async function reserveEmailSlot(context: SendContext, email: string) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const recipientEmail = normalizeEmail(email);
+
+  return prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw`SELECT id FROM emailQuotaLocks WHERE id = 1 FOR UPDATE`;
+    await transaction.emailSendReservation.deleteMany({ where: { reservedAt: { lt: since } } });
+
+    const existingReservation = await transaction.emailSendReservation.findUnique({
+      where: { campaignId_recipientEmail: { campaignId: context.campaignId, recipientEmail } },
+    });
+    if (existingReservation) throw new RecipientAlreadyReservedError();
+
+    const [globalUsage, activeReservations, campaignUsage, campaignReservations] = await Promise.all([
+      transaction.emailDelivery.count({ where: { sentAt: { gte: since } } }),
+      transaction.emailSendReservation.count({ where: { reservedAt: { gte: since } } }),
+      transaction.emailDelivery.count({ where: { campaignId: context.campaignId, sentAt: { gte: since } } }),
+      transaction.emailSendReservation.count({ where: { campaignId: context.campaignId, reservedAt: { gte: since } } }),
+    ]);
+    if (globalUsage + activeReservations >= GLOBAL_DAILY_LIMIT
+      || campaignUsage + campaignReservations >= context.dailyLimit) {
+      throw new DailyLimitReachedError();
+    }
+
+    return transaction.emailSendReservation.create({
+      data: { campaignId: context.campaignId, recipientEmail },
+    });
+  });
 }
 
-async function recordDelivery(context: SendContext, email: string, assignment?: Assignment) {
+async function releaseEmailSlot(reservationId: number) {
+  await prisma.emailSendReservation.delete({ where: { id: reservationId } }).catch((error) => {
+    emailLogger.error(`Failed to release email reservation ${reservationId}: ${(error as Error).message}`);
+  });
+}
+
+async function recordDelivery(context: SendContext, email: string, reservationId: number, assignment?: Assignment) {
   //The recipient email is always retained in the history.
   const contact = assignment?.contact ?? await prisma.contact.findUnique({
     where: { email },
@@ -110,6 +177,10 @@ async function recordDelivery(context: SendContext, email: string, assignment?: 
       },
     });
 
+    // After the mail is sent successfully, delete the reservation and assignment
+    // (if any) to free up the slot for future sends.
+    await transaction.emailSendReservation.delete({ where: { id: reservationId } });
+
     if (assignment) {
       // Assignment rows are the pending queue only. Once delivery succeeds,
       // remove the queue row; EmailDelivery is the durable audit history.
@@ -120,48 +191,83 @@ async function recordDelivery(context: SendContext, email: string, assignment?: 
   });
 }
 
-async function sendOne(context: SendContext, email: string, prefix = '') {
-  let smtpAccepted = false;
 
+async function sendOne(context: SendContext, email: string, prefix = ''): Promise<SendOutcome> {
+
+  let reservation;
   try {
-    await context.transporter.sendMail(
-      buildMailOptions(email, context.subject, context.html, context.attachments)
-    );
-    // SMTP acceptance is the delivery boundary. From this point onward, a
-    // database error must not turn an accepted email into a false failure.
-    smtpAccepted = true;
+    // Reserve the slot first so sending cannot cross the global daily limit.
+    reservation = await reserveEmailSlot(context, email);
   } catch (error) {
-    const reason = (error as Error).message;
-    try {
-      await recordFailure(context, email, reason);
-    } catch (persistenceError) {
-      emailLogger.error(
-        `${prefix}Failed to record SMTP failure for ${email}: ${(persistenceError as Error).message} `
-        + `(original SMTP error: ${reason})`
-      );
-    }
-    emailLogger.error(`${prefix}Failed to send to ${email}: ${reason}`);
-    return false;
+    if (error instanceof DailyLimitReachedError) return 'limit';
+    if (error instanceof RecipientAlreadyReservedError) return 'busy';
+    // Record reservation failures so they can be retried later.
+    await recordSendFailure(context, email, (error as Error).message, prefix, 'quota reservation failure');
+    return 'failed';
   }
 
+  let mailResponse: MailResponse;
+
   try {
-    await recordDelivery(context, email, context.assignments.get(assignmentKey(email)));
+    mailResponse = await context.transporter.sendMail(
+      buildMailOptions(email, context.subject, context.html, context.attachments)
+    );
   } catch (error) {
-    // If we reach here, it means the message was accepted by SMTP, so count it as sent.
+    const reason = (error as Error).message;
+    // If sending fails, release the reservation slot.
+    await releaseEmailSlot(reservation.id);
+
+    //if some error occured while sending.
+    await recordSendFailure(context, email, reason, prefix, 'SMTP failure');
+    return 'failed';
+  }
+
+  // The SMTP request completed, but the server rejected the recipient.
+  if (!wasAcceptedBySmtp(mailResponse, email)) {
+    const reason = smtpRejectionReason(mailResponse, email);
+    //if failed, remove slot.
+    await releaseEmailSlot(reservation.id);
+    await recordSendFailure(context, email, reason, prefix, 'SMTP rejection');
+    return 'failed';
+  }
+
+  const assignment = context.assignments.get(normalizeEmail(email));
+  try {
+    //if successfully sent, record delievry and inside it, we also remove the reservation.
+    await recordDelivery(context, email, reservation.id, assignment);
+  } catch (error) {
+    // The message was accepted by SMTP, so count it as sent even if the
+    // delivery history could not be saved.
     emailLogger.error(
       `${prefix}SMTP accepted ${email}, but delivery history could not be saved: ${(error as Error).message}`
     );
+    return 'pending';
   }
 
-  if (smtpAccepted) {
-    emailLogger.success(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
-    return true;
+  emailLogger.success(`${prefix}Sent to ${email} [campaign: ${context.campaignId}]`);
+  return 'sent';
+}
+
+async function recordSendFailure(
+  context: SendContext,
+  email: string,
+  reason: string,
+  prefix: string,
+  failureType: string,
+) {
+  try {
+    await recordFailure(context, email, reason);
+  } catch (persistenceError) {
+    emailLogger.error(
+      `${prefix}Failed to record ${failureType.toLowerCase()} for ${email}: `
+      + `${(persistenceError as Error).message} (original reason: ${reason})`
+    );
   }
-  return false;
+  emailLogger.error(`${prefix}Failed to send to ${email}: ${reason}`);
 }
 
 async function recordFailure(context: SendContext, email: string, reason: string) {
-  const assignment = context.assignments.get(assignmentKey(email));
+  const assignment = context.assignments.get(normalizeEmail(email));
   const contact = assignment?.contact ?? await prisma.contact.findUnique({
     where: { email },
     select: { id: true },
@@ -182,12 +288,20 @@ async function sendAtIntervals(context: SendContext, recipients: string[]): Prom
   let failed = 0;
 
   for (const email of recipients) {
-    if (await pauseAtDailyLimit(context.campaignId, sent)) {
+    const outcome = await sendOne(context, email, '[interval] ');
+    if (outcome === 'limit') {
+      await pauseAtDailyLimit(context.campaignId);
       return { sent, failed, paused: true };
     }
-
-    const successful = await sendOne(context, email, '[interval] ');
-    if (successful) sent++;
+    if (outcome === 'busy') {
+      await pauseForActiveSend(context.campaignId);
+      return { sent, failed, paused: true };
+    }
+    if (outcome === 'pending') {
+      await pauseForPersistenceFailure(context.campaignId);
+      return { sent, failed, paused: true };
+    }
+    if (outcome === 'sent') sent++;
     else failed++;
 
     if (sent + failed < recipients.length) {
@@ -200,22 +314,44 @@ async function sendAtIntervals(context: SendContext, recipients: string[]): Prom
   return { sent, failed, paused: false };
 }
 
-async function sendInBatches(context: SendContext, recipients: string[]): Promise<SendResult> {
+async function sendImmediately(context: SendContext, recipients: string[]): Promise<SendResult> {
   let sent = 0;
   let failed = 0;
 
-  for (let index = 0; index < recipients.length; index += BATCH_SIZE) {
-    if (await pauseAtDailyLimit(context.campaignId, sent)) {
+  for (const email of recipients) {
+    const outcome = await sendOne(context, email);
+    if (outcome === 'limit') {
+      await pauseAtDailyLimit(context.campaignId);
       return { sent, failed, paused: true };
     }
-
-    const batch = recipients.slice(index, index + BATCH_SIZE);
-    const results = await Promise.all(batch.map((email) => sendOne(context, email)));
-    sent += results.filter(Boolean).length;
-    failed += results.length - results.filter(Boolean).length;
+    if (outcome === 'busy') {
+      await pauseForActiveSend(context.campaignId);
+      return { sent, failed, paused: true };
+    }
+    if (outcome === 'pending') {
+      await pauseForPersistenceFailure(context.campaignId);
+      return { sent, failed, paused: true };
+    }
+    if (outcome === 'sent') sent++;
+    else failed++;
   }
 
   return { sent, failed, paused: false };
+}
+
+async function pauseAtDailyLimit(campaignId: number) {
+  emailLogger.warn(`24-hour email limit reached. Pausing campaign ${campaignId}`);
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.DAILY_LIMIT } });
+}
+
+async function pauseForActiveSend(campaignId: number) {
+  emailLogger.info(`Another send is processing campaign ${campaignId}. Pausing this run.`);
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.ACTIVE_SEND } });
+}
+
+async function pauseForPersistenceFailure(campaignId: number) {
+  emailLogger.warn(`Campaign ${campaignId} paused because an accepted email could not be recorded safely.`);
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.PERSISTENCE_FAILURE } });
 }
 
 async function updateFinishedStatus(campaignId: number, result: SendResult, mode: SendMode) {
@@ -223,7 +359,7 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
 
   await prisma.campaign.update({
     where: { id: campaignId },
-    data: { status: result.sent > 0 ? 'COMPLETED' : 'FAILED' },
+    data: { status: result.sent > 0 ? CampaignStatus.COMPLETED : CampaignStatus.FAILED, pauseReason: null },
   });
 
   emailLogger.info(
@@ -235,58 +371,49 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
 }
 
 /**
- * Sends a campaign using immediate/scheduled batch delivery or interval delivery.
+ * Sends a campaign using immediate or interval delivery.
  * Assigned campaigns use only their assignedCampaigns queue. Successful queue
  * rows are removed and every successful delivery is written to history;
  * failed queue rows remain available for retry.
  */
-export async function sendCampaign(campaignId: number, mode: SendMode = 'immediate', retryFailed = false): Promise<void> {
+export async function sendCampaign(campaignId: number, mode: SendMode = SEND_MODES.IMMEDIATE, retryFailed = false): Promise<void> {
   try {
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) throw new Error('Campaign not found');
 
-    const { recipients, assignments } = await loadRecipients(campaignId, campaign, retryFailed);
+    const { recipients, assignments, hasActiveReservations } = await loadRecipients(campaignId, campaign, retryFailed);
     if (recipients.length === 0) {
+      if (hasActiveReservations) {
+        emailLogger.info(`Campaign ${campaignId}: waiting for an active email reservation`);
+        return;
+      }
       emailLogger.info(`Campaign ${campaignId}: no recipients, marking COMPLETED`);
-      await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'COMPLETED' } });
+      await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.COMPLETED } });
       return;
     }
 
-    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'RUNNING' } });
-
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const sentInLast24Hours = await prisma.emailDelivery.count({ where: { campaignId, sentAt: { gte: since } } });
-    const dailyLimit = Math.min(campaign.dailyLimit ?? 50, MAX_DAILY_LIMIT);
-    const available = dailyLimit - sentInLast24Hours;
-    if (available <= 0) {
-      await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
-      emailLogger.warn(`Campaign ${campaignId} has no 24-hour capacity remaining`);
-      return;
-    }
-    const sendableRecipients = recipients.slice(0, available);
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.RUNNING, pauseReason: null } });
 
     const context: SendContext = {
       campaignId,
+      // Immediate sends are governed only by the global quota. Scheduled and
+      // interval sends also enforce the campaign-level 24-hour limit.
+      dailyLimit: mode === SEND_MODES.IMMEDIATE
+        ? GLOBAL_DAILY_LIMIT
+        : Math.min(campaign.dailyLimit ?? 50, GLOBAL_DAILY_LIMIT),
       subject: campaign.subject,
       html: campaign.htmlContent,
       attachments: buildMailAttachments(parseJsonArray<MailAttachment>(campaign.attachments)),
       transporter: createTransporter(),
       assignments,
     };
-    const result = mode === 'interval'
-      ? await sendAtIntervals(context, sendableRecipients)
-      : await sendInBatches(context, sendableRecipients);
+    const result = mode === SEND_MODES.INTERVAL
+      ? await sendAtIntervals(context, recipients)
+      : await sendImmediately(context, recipients);
 
-    // Keep the campaign paused when the 24-hour capacity truncated the
-    // pending queue. The remaining recipients must be retried after capacity
-    // becomes available instead of being reported as completed.
-    await updateFinishedStatus(
-      campaignId,
-      sendableRecipients.length < recipients.length ? { ...result, paused: true } : result,
-      mode,
-    );
+    await updateFinishedStatus(campaignId, result, mode);
   } catch (error) {
     emailLogger.error(`Campaign ${campaignId} crashed: ${(error as Error).message}`);
-    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'FAILED' } }).catch(() => {});
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.FAILED, pauseReason: null } }).catch(() => {});
   }
 }

@@ -5,6 +5,7 @@ import prisma from '../config/database';
 import { createTransporter } from '../config/smtp';
 import logger from '../utils/logger';
 import { JwtPayload, Role } from '../types';
+import { getJwtSecret } from '../config/env';
 
 export async function ensureAdminExists(): Promise<void> {
   const email = process.env.ADMIN_EMAIL || process.env.SMTP_USER;
@@ -63,7 +64,7 @@ export async function loginUser(email: string, password: string) {
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
   const payload: JwtPayload = { userId: user.id, email: user.email, role: user.role as Role };
-  const token = jwt.sign(payload, process.env.JWT_SECRET || 'secret', {
+  const token = jwt.sign(payload, getJwtSecret(), {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   } as jwt.SignOptions);
 

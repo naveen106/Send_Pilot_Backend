@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { body } from 'express-validator';
-import { AuthRequest, SendMode } from '../types';
+import { AuthRequest, SEND_MODES, SendMode } from '../types';
 import * as campaignService from '../services/campaign.service';
 import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
 
@@ -12,7 +12,8 @@ export const campaignValidation = [
   body('subject').notEmpty().trim(),
   body('htmlContent').notEmpty(),
   body('recipients').customSanitizer((v) => (Array.isArray(v) ? v : v ? [v] : [])),
-  body('recipients').isArray({ min: 1 }).withMessage('At least one recipient is required'),
+  // Campaigns may be created empty and populated later through contact assignment.
+  body('recipients').isArray().withMessage('Recipients must be an array'),
   body('recipients.*').isEmail().withMessage('Each recipient must be a valid email'),
 ];
 
@@ -36,7 +37,7 @@ export async function create(req: AuthRequest, res: Response): Promise<void> {
       name, subject, htmlContent,
       recipients,
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
-      sendMode: sendMode || 'immediate',
+      sendMode: sendMode || SEND_MODES.IMMEDIATE,
       dailyLimit,
       createdBy: req.user!.userId,
       attachments,
@@ -138,8 +139,3 @@ export async function bulkRemove(req: AuthRequest, res: Response): Promise<void>
   }
 }
 
-/** Returns aggregated dashboard statistics. */
-export async function getDashboard(_req: AuthRequest, res: Response): Promise<void> {
-  const stats = await campaignService.getDashboardStats();
-  sendSuccess(res, stats);
-}
