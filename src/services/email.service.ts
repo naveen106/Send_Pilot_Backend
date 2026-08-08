@@ -3,7 +3,8 @@ import { createTransporter } from '../config/smtp';
 import { appConfig } from '../config/app.config';
 import { emailLogger } from '../utils/logger';
 import { parseJsonArray, randomDelay, sleep } from '../utils/helpers';
-import { SendMode, MailAttachment } from '../types';
+import { SEND_MODES, SendMode, MailAttachment } from '../types';
+import { AssignmentDeliveryStatus, CampaignPauseReason, CampaignStatus } from '@prisma/client';
 
 const GLOBAL_DAILY_LIMIT = appConfig.email.globalDailyLimit;
 const DELAY_MIN = appConfig.email.randomDelayMinMs;
@@ -79,7 +80,7 @@ function smtpRejectionReason(mailResponse: MailResponse, email: string) {
 
 async function loadRecipients(campaignId: number, campaign: { isAssigned: boolean; recipients: string }, retryFailed: boolean) {
   const assignments = await prisma.assignedCampaigns.findMany({
-    where: { campaignId, deliveryStatus: 'PENDING' },
+    where: { campaignId, deliveryStatus: AssignmentDeliveryStatus.PENDING },
     select: { id: true, contact: { select: { id: true, email: true } } },
   });
 
@@ -339,18 +340,18 @@ async function sendImmediately(context: SendContext, recipients: string[]): Prom
 }
 
 async function pauseAtDailyLimit(campaignId: number) {
-  emailLogger.warn(`24-hour global email limit reached. Pausing campaign ${campaignId}`);
-  await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+  emailLogger.warn(`24-hour email limit reached. Pausing campaign ${campaignId}`);
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.DAILY_LIMIT } });
 }
 
 async function pauseForActiveSend(campaignId: number) {
   emailLogger.info(`Another send is processing campaign ${campaignId}. Pausing this run.`);
-  await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.ACTIVE_SEND } });
 }
 
 async function pauseForPersistenceFailure(campaignId: number) {
   emailLogger.warn(`Campaign ${campaignId} paused because an accepted email could not be recorded safely.`);
-  await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.PERSISTENCE_FAILURE } });
 }
 
 async function updateFinishedStatus(campaignId: number, result: SendResult, mode: SendMode) {
@@ -358,7 +359,7 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
 
   await prisma.campaign.update({
     where: { id: campaignId },
-    data: { status: result.sent > 0 ? 'COMPLETED' : 'FAILED' },
+    data: { status: result.sent > 0 ? CampaignStatus.COMPLETED : CampaignStatus.FAILED, pauseReason: null },
   });
 
   emailLogger.info(
@@ -375,7 +376,7 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
  * rows are removed and every successful delivery is written to history;
  * failed queue rows remain available for retry.
  */
-export async function sendCampaign(campaignId: number, mode: SendMode = 'immediate', retryFailed = false): Promise<void> {
+export async function sendCampaign(campaignId: number, mode: SendMode = SEND_MODES.IMMEDIATE, retryFailed = false): Promise<void> {
   try {
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) throw new Error('Campaign not found');
@@ -387,11 +388,11 @@ export async function sendCampaign(campaignId: number, mode: SendMode = 'immedia
         return;
       }
       emailLogger.info(`Campaign ${campaignId}: no recipients, marking COMPLETED`);
-      await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'COMPLETED' } });
+      await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.COMPLETED } });
       return;
     }
 
-    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'RUNNING' } });
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.RUNNING, pauseReason: null } });
 
     const context: SendContext = {
       campaignId,
@@ -402,13 +403,13 @@ export async function sendCampaign(campaignId: number, mode: SendMode = 'immedia
       transporter: createTransporter(),
       assignments,
     };
-    const result = mode === 'interval'
+    const result = mode === SEND_MODES.INTERVAL
       ? await sendAtIntervals(context, recipients)
       : await sendImmediately(context, recipients);
 
     await updateFinishedStatus(campaignId, result, mode);
   } catch (error) {
     emailLogger.error(`Campaign ${campaignId} crashed: ${(error as Error).message}`);
-    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'FAILED' } }).catch(() => {});
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.FAILED, pauseReason: null } }).catch(() => {});
   }
 }

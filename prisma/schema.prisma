@@ -24,6 +24,13 @@ enum CampaignStatus {
   PAUSED
 }
 
+enum CampaignPauseReason {
+  DAILY_LIMIT
+  ACTIVE_SEND
+  PERSISTENCE_FAILURE
+  INTERRUPTED
+}
+
 model User {
   id                Int        @id @default(autoincrement())
   email             String     @unique
@@ -47,6 +54,7 @@ model Campaign {
   subject            String
   htmlContent        String              @db.Text
   status             CampaignStatus      @default(DRAFT)
+  pauseReason        CampaignPauseReason?
   sendMode           String              @default("immediate")
   scheduledAt        DateTime?
   totalCount         Int                 @default(0)

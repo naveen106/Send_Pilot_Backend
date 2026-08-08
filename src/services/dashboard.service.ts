@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { CampaignStatus } from '@prisma/client';
 
 /**
  * Aggregates the metrics displayed on the dashboard.
@@ -10,17 +11,17 @@ export async function getDashboardStats() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const [totalCampaigns, totalContacts, scheduledCampaigns, completedToday, agg] = await Promise.all([
+  const [totalCampaigns, totalContacts, scheduledCampaigns, sentToday, agg] = await Promise.all([
     prisma.campaign.count(),
     prisma.contact.count(),
-    prisma.campaign.count({ where: { status: 'SCHEDULED' } }),
-    prisma.campaign.count({ where: { status: 'COMPLETED', updatedAt: { gte: today } } }),
+    prisma.campaign.count({ where: { status: CampaignStatus.SCHEDULED } }),
+    prisma.emailDelivery.count({ where: { sentAt: { gte: today } } }),
     prisma.campaign.aggregate({ _sum: { totalCount: true } }),
   ]);
 
   return {
     totalEmails: agg._sum.totalCount ?? 0,
-    sentToday: completedToday,
+    sentToday,
     scheduledCampaigns,
     totalCampaigns,
     totalContacts,

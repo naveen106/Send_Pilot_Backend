@@ -5,7 +5,8 @@ import { uniquePositiveIds, uniqueTrimmedStrings } from '../utils/collections';
 import { sendCampaign } from './email.service';
 import { appConfig } from '../config/app.config';
 import { createMissingContacts } from './contact.service';
-import { SendMode, MailAttachment } from '../types';
+import { SEND_MODES, SendMode, MailAttachment } from '../types';
+import { AssignmentDeliveryStatus, CampaignStatus } from '@prisma/client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,7 @@ const CAMPAIGN_SELECT = {
   subject: true,
   htmlContent: true,
   status: true,
+  pauseReason: true,
   sendMode: true,
   scheduledAt: true,
   totalCount: true,
@@ -43,7 +45,7 @@ const CAMPAIGN_SELECT = {
   user: { select: { name: true, email: true } },
   
   assignedCampaigns: {
-    where: { deliveryStatus: 'PENDING' },
+    where: { deliveryStatus: AssignmentDeliveryStatus.PENDING },
     select: {
       id: true,
       contactId: true,
@@ -168,8 +170,8 @@ export async function createCampaign(data: CreateCampaignInput) {
   const recipients = Array.isArray(data.recipients) ? data.recipients : [];
 
   const hasRecipients = recipients.length > 0;
-  const isScheduled = hasRecipients && data.sendMode === 'scheduled' && !!data.scheduledAt;
-  const mode: SendMode = data.sendMode || 'immediate';
+  const isScheduled = hasRecipients && data.sendMode === SEND_MODES.SCHEDULED && !!data.scheduledAt;
+  const mode: SendMode = data.sendMode || SEND_MODES.IMMEDIATE;
   const dailyLimit = validateDailyLimit(data.dailyLimit);
 
   const { campaign, contactsAdded } = await prisma.$transaction(async (transaction) => {
@@ -179,7 +181,7 @@ export async function createCampaign(data: CreateCampaignInput) {
         subject: data.subject,
         htmlContent: data.htmlContent,
         scheduledAt: isScheduled ? data.scheduledAt! : null,
-        status: isScheduled ? 'SCHEDULED' : 'DRAFT',
+        status: isScheduled ? CampaignStatus.SCHEDULED : CampaignStatus.DRAFT,
         sendMode: mode,
         totalCount: recipients.length,
         dailyLimit,
@@ -258,24 +260,24 @@ export async function bulkDeleteCampaigns(ids: number[]) {
 export async function sendCampaignNow(campaignId: number, requestedMode?: SendMode, scheduledAt?: Date, requestedLimit?: number, retryFailed = false) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error('Campaign not found');
-  if (campaign.status === 'RUNNING') throw new Error('Campaign already running');
+  if (campaign.status === CampaignStatus.RUNNING) throw new Error('Campaign already running');
   const mode: SendMode = requestedMode ?? normalizeSendMode(campaign.sendMode);
-  if (!['immediate', 'scheduled', 'interval'].includes(mode)) throw new Error('Invalid send mode');
+  if (!Object.values(SEND_MODES).includes(mode)) throw new Error('Invalid send mode');
   const dailyLimit = validateDailyLimit(requestedLimit ?? campaign.dailyLimit);
 
-  if (mode === 'scheduled') {
+  if (mode === SEND_MODES.SCHEDULED) {
     if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) throw new Error('A valid schedule date is required');
     if (scheduledAt.getTime() <= Date.now()) throw new Error('Schedule date must be in the future');
 
     await prisma.campaign.update({
       where: { id: campaignId },
-      data: { status: 'SCHEDULED', scheduledAt, dailyLimit, sendMode: mode },
+      data: { status: CampaignStatus.SCHEDULED, pauseReason: null, scheduledAt, dailyLimit, sendMode: mode },
     });
     logger.info(`Scheduled assigned campaign ${campaignId} for ${scheduledAt.toISOString()}`);
     return { message: 'Campaign scheduled' };
   }
 
-  await prisma.campaign.update({ where: { id: campaignId }, data: { dailyLimit, sendMode: mode } });
+  await prisma.campaign.update({ where: { id: campaignId }, data: { pauseReason: null, dailyLimit, sendMode: mode } });
   logger.info(`Triggering ${mode} send for campaign ${campaignId} with 24-hour limit ${dailyLimit}`);
   setImmediate(() => sendCampaign(campaignId, mode, retryFailed));
   return { message: 'Campaign send initiated' };
@@ -290,7 +292,7 @@ function validateDailyLimit(value?: number) {
 }
 
 function normalizeSendMode(value?: string): SendMode {
-  return value === 'interval' || value === 'scheduled' || value === 'immediate' ? value : 'immediate';
+  return Object.values(SEND_MODES).includes(value as SendMode) ? value as SendMode : SEND_MODES.IMMEDIATE;
 }
 
 /**
@@ -331,7 +333,7 @@ export async function assignContactsToCampaigns(campaignIds: number[], emails: s
   }[] = [];
 
   for (const campaign of campaigns) {
-    if (campaign.status === 'RUNNING') {
+    if (campaign.status === CampaignStatus.RUNNING) {
       results.push({
         id: campaign.id,
         name: campaign.name,
@@ -361,7 +363,7 @@ export async function assignContactsToCampaigns(campaignIds: number[], emails: s
     );
     const pendingContactIds = new Set(
       existingAssignments
-        .filter((assignment) => assignment.deliveryStatus === 'PENDING')
+        .filter((assignment) => assignment.deliveryStatus === AssignmentDeliveryStatus.PENDING)
         .map((assignment) => assignment.contactId)
     );
     const originalRecipientEmails = new Set(
@@ -381,7 +383,7 @@ export async function assignContactsToCampaigns(campaignIds: number[], emails: s
     await prisma.campaign.update({ where: { id: campaign.id }, data: { isAssigned: true } });
 
     const assignedTotal = await prisma.assignedCampaigns.count({
-      where: { campaignId: campaign.id, deliveryStatus: 'PENDING' },
+      where: { campaignId: campaign.id, deliveryStatus: AssignmentDeliveryStatus.PENDING },
     });
     const added = assignmentResult.count;
     if (assignedTotal > campaign.totalCount) {

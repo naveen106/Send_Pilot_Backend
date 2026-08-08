@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { body } from 'express-validator';
-import { AuthRequest, SendMode } from '../types';
+import { AuthRequest, SEND_MODES, SendMode } from '../types';
 import * as campaignService from '../services/campaign.service';
 import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
 
@@ -37,7 +37,7 @@ export async function create(req: AuthRequest, res: Response): Promise<void> {
       name, subject, htmlContent,
       recipients,
       scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
-      sendMode: sendMode || 'immediate',
+      sendMode: sendMode || SEND_MODES.IMMEDIATE,
       dailyLimit,
       createdBy: req.user!.userId,
       attachments,

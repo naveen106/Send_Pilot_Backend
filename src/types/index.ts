@@ -32,8 +32,14 @@ export interface SmtpConfig {
   pass: string;
 }
 
-/** Campaign send strategy — controls how emails are dispatched. */
-export type SendMode = 'immediate' | 'scheduled' | 'interval';
+/** Campaign send strategies — controls how emails are dispatched. */
+export const SEND_MODES = {
+  IMMEDIATE: 'immediate',
+  SCHEDULED: 'scheduled',
+  INTERVAL: 'interval',
+} as const;
+
+export type SendMode = typeof SEND_MODES[keyof typeof SEND_MODES];
 
 /** A file attachment stored as base64 content alongside its metadata. */
 export interface MailAttachment {
