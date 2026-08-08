@@ -32,7 +32,7 @@ export function startScheduler(): void {
         logger.info(`Scheduler: triggering campaign ${campaign.id} "${campaign.name}"`);
         // Mark running immediately so next tick doesn't pick it up again
         await prisma.campaign.update({ where: { id: campaign.id }, data: { status: CampaignStatus.RUNNING, pauseReason: null } });
-        const mode = campaign.sendMode === SEND_MODES.INTERVAL ? SEND_MODES.INTERVAL : SEND_MODES.IMMEDIATE;
+        const mode = resolveExecutionMode(campaign.sendMode);
         sendCampaign(campaign.id, mode).catch((err) =>
           logger.error(`Scheduler: campaign ${campaign.id} failed: ${err.message}`)
         );
@@ -71,9 +71,12 @@ async function resumeQuotaPausedCampaigns(): Promise<void> {
       prisma.emailDelivery.count({ where: { campaignId: campaign.id, sentAt: { gte: since } } }),
       prisma.emailSendReservation.count({ where: { campaignId: campaign.id, reservedAt: { gte: since } } }),
     ]);
+    const mode = resolveExecutionMode(campaign.sendMode);
     const campaignLimit = Math.min(campaign.dailyLimit, appConfig.email.globalDailyLimit);
+    const hasCampaignCapacity = mode === SEND_MODES.IMMEDIATE
+      || campaignUsage + campaignReservations < campaignLimit;
     const hasCapacity = globalUsage + activeReservations < appConfig.email.globalDailyLimit
-      && campaignUsage + campaignReservations < campaignLimit;
+      && hasCampaignCapacity;
     if (!hasCapacity) continue;
 
     const resumed = await prisma.campaign.updateMany({
@@ -82,7 +85,6 @@ async function resumeQuotaPausedCampaigns(): Promise<void> {
     });
     if (resumed.count === 0) continue;
 
-    const mode = campaign.sendMode === SEND_MODES.INTERVAL ? SEND_MODES.INTERVAL : SEND_MODES.IMMEDIATE;
     logger.info(`Resuming quota-paused campaign ${campaign.id} "${campaign.name}" as ${mode}`);
     setImmediate(() => sendCampaign(campaign.id, mode));
   }
@@ -101,8 +103,17 @@ async function recoverInterruptedCampaigns(): Promise<void> {
   });
 
   for (const campaign of interrupted) {
-    const mode = campaign.sendMode === SEND_MODES.INTERVAL ? SEND_MODES.INTERVAL : SEND_MODES.IMMEDIATE;
+    const mode = resolveExecutionMode(campaign.sendMode);
     logger.warn(`Resuming interrupted campaign ${campaign.id} "${campaign.name}" as ${mode}`);
     setImmediate(() => sendCampaign(campaign.id, mode));
   }
+}
+
+/** Scheduled campaigns retain their campaign-level limit after their start time. */
+function resolveExecutionMode(sendMode: string): typeof SEND_MODES[keyof typeof SEND_MODES] {
+  return sendMode === SEND_MODES.INTERVAL
+    ? SEND_MODES.INTERVAL
+    : sendMode === SEND_MODES.SCHEDULED
+      ? SEND_MODES.SCHEDULED
+      : SEND_MODES.IMMEDIATE;
 }

@@ -396,7 +396,11 @@ export async function sendCampaign(campaignId: number, mode: SendMode = SEND_MOD
 
     const context: SendContext = {
       campaignId,
-      dailyLimit: Math.min(campaign.dailyLimit ?? 50, GLOBAL_DAILY_LIMIT),
+      // Immediate sends are governed only by the global quota. Scheduled and
+      // interval sends also enforce the campaign-level 24-hour limit.
+      dailyLimit: mode === SEND_MODES.IMMEDIATE
+        ? GLOBAL_DAILY_LIMIT
+        : Math.min(campaign.dailyLimit ?? 50, GLOBAL_DAILY_LIMIT),
       subject: campaign.subject,
       html: campaign.htmlContent,
       attachments: buildMailAttachments(parseJsonArray<MailAttachment>(campaign.attachments)),

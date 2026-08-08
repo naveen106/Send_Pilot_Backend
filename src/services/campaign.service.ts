@@ -263,7 +263,8 @@ export async function sendCampaignNow(campaignId: number, requestedMode?: SendMo
   if (campaign.status === CampaignStatus.RUNNING) throw new Error('Campaign already running');
   const mode: SendMode = requestedMode ?? normalizeSendMode(campaign.sendMode);
   if (!Object.values(SEND_MODES).includes(mode)) throw new Error('Invalid send mode');
-  const dailyLimit = validateDailyLimit(requestedLimit ?? campaign.dailyLimit);
+  const usesDailyLimit = mode !== SEND_MODES.IMMEDIATE;
+  const dailyLimit = usesDailyLimit ? validateDailyLimit(requestedLimit ?? campaign.dailyLimit) : campaign.dailyLimit;
 
   if (mode === SEND_MODES.SCHEDULED) {
     if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) throw new Error('A valid schedule date is required');
@@ -277,8 +278,13 @@ export async function sendCampaignNow(campaignId: number, requestedMode?: SendMo
     return { message: 'Campaign scheduled' };
   }
 
-  await prisma.campaign.update({ where: { id: campaignId }, data: { pauseReason: null, dailyLimit, sendMode: mode } });
-  logger.info(`Triggering ${mode} send for campaign ${campaignId} with 24-hour limit ${dailyLimit}`);
+  await prisma.campaign.update({
+    where: { id: campaignId },
+    data: { pauseReason: null, sendMode: mode, ...(usesDailyLimit ? { dailyLimit } : {}) },
+  });
+  logger.info(usesDailyLimit
+    ? `Triggering ${mode} send for campaign ${campaignId} with 24-hour limit ${dailyLimit}`
+    : `Triggering immediate send for campaign ${campaignId} without a campaign-level 24-hour limit`);
   setImmediate(() => sendCampaign(campaignId, mode, retryFailed));
   return { message: 'Campaign send initiated' };
 }
