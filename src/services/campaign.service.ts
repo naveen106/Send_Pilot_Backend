@@ -3,6 +3,7 @@ import logger from '../utils/logger';
 import { parseJsonArray, sanitizeLog } from '../utils/helpers';
 import { uniquePositiveIds, uniqueTrimmedStrings } from '../utils/collections';
 import { sendCampaign } from './email.service';
+import { appConfig } from '../config/app.config';
 import { createMissingContacts } from './contact.service';
 import { SendMode, MailAttachment } from '../types';
 
@@ -282,8 +283,8 @@ export async function sendCampaignNow(campaignId: number, requestedMode?: SendMo
 
 function validateDailyLimit(value?: number) {
   const limit = value ?? 50;
-  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
-    throw new Error('24-hour email limit must be a whole number between 1 and 200');
+  if (!Number.isInteger(limit) || limit < 1 || limit > appConfig.email.globalDailyLimit) {
+    throw new Error(`24-hour email limit must be a whole number between 1 and ${appConfig.email.globalDailyLimit}`);
   }
   return limit;
 }

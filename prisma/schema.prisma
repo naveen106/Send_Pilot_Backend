@@ -105,8 +105,8 @@ model assignedCampaigns {
 // Assignment rows remain the pending/send queue; this model is the audit trail.
 model EmailDelivery {
   id             Int       @id @default(autoincrement())
-  campaignId     Int
-  campaign       Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId     Int?
+  campaign       Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   contactId      Int?
   contact        Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
   recipientEmail String    @db.VarChar(254)
@@ -117,6 +117,27 @@ model EmailDelivery {
   @@index([campaignId, sentAt])
   @@index([contactId])
   @@map("emailDeliveries")
+}
+
+// Temporary reservation used to prevent concurrent senders from exceeding
+// the global quota or sending the same campaign recipient twice.
+model EmailSendReservation {
+  id             Int      @id @default(autoincrement())
+  campaignId     Int
+  recipientEmail String   @db.VarChar(254)
+  reservedAt     DateTime @default(now())
+
+  @@index([reservedAt])
+  @@unique([campaignId, recipientEmail])
+  @@map("emailSendReservations")
+}
+
+// Singleton row used to serialize quota reservations across app instances.
+model EmailQuotaLock {
+  id        Int      @id @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@map("emailQuotaLocks")
 }
 
 // Immutable history of failed delivery attempts. A later successful retry is
