@@ -21,10 +21,15 @@ export async function login(req: AuthRequest, res: Response): Promise<void> {
 
 export async function forgotPassword(req: AuthRequest, res: Response): Promise<void> {
   try {
-    await authService.forgotPassword(req.body.email);
-    sendSuccess(res, undefined, 'If that email exists, a reset link has been sent.');
+    const userFound = await authService.forgotPassword(req.body.email);
+    if (!userFound) {
+      sendError(res, 404, "User not found, so we can't reset the password.");
+      return;
+    }
+    sendSuccess(res, undefined, 'Reset link sent successfully.');
   } catch (error) {
-    sendError(res, 500, getErrorMessage(error));
+    // Keep provider details in server logs while returning a clear response.
+    sendError(res, 500, 'Server error: we could not send the reset email. Please try again later.');
   }
 }
 
