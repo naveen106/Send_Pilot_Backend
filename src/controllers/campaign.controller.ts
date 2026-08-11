@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { body } from 'express-validator';
 import { AuthRequest, SEND_MODES, SendMode } from '../types';
 import * as campaignService from '../services/campaign.service';
-import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
+import { getErrorMessage, getPagination, getRouteId, sendError, sendSuccess } from '../utils/http';
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -61,7 +61,7 @@ export async function getAll(req: AuthRequest, res: Response): Promise<void> {
 
 /** Returns a single campaign by ID. */
 export async function getOne(req: AuthRequest, res: Response): Promise<void> {
-  const campaign = await campaignService.getCampaignById(parseInt(req.params.id));
+  const campaign = await campaignService.getCampaignById(getRouteId(req.params));
   if (!campaign) { sendError(res, 404, 'Not found'); return; }
   sendSuccess(res, campaign);
 }
@@ -76,7 +76,7 @@ export async function sendNow(req: AuthRequest, res: Response): Promise<void> {
     const requestedLimit = req.body?.dailyLimit === undefined ? undefined : Number(req.body.dailyLimit);
     const retryFailed = req.body?.retryFailed === true;
     const scheduledAt = req.body?.scheduledAt ? new Date(req.body.scheduledAt) : undefined;
-    const result = await campaignService.sendCampaignNow(parseInt(req.params.id), requestedMode, scheduledAt, requestedLimit, retryFailed);
+    const result = await campaignService.sendCampaignNow(getRouteId(req.params), requestedMode, scheduledAt, requestedLimit, retryFailed);
     res.json({ success: true, ...result });
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));
@@ -117,7 +117,7 @@ export async function assign(req: AuthRequest, res: Response): Promise<void> {
 /** Deletes a single campaign by ID. */
 export async function remove(req: AuthRequest, res: Response): Promise<void> {
   try {
-    await campaignService.deleteCampaign(parseInt(req.params.id));
+    await campaignService.deleteCampaign(getRouteId(req.params));
     sendSuccess(res, undefined, 'Campaign deleted');
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));

@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../types';
 import * as contactService from '../services/contact.service';
 import * as campaignService from '../services/campaign.service';
-import { getErrorMessage, getPagination, sendError, sendSuccess } from '../utils/http';
+import { getErrorMessage, getPagination, getRouteId, sendError, sendSuccess } from '../utils/http';
 
 export async function importContacts(req: AuthRequest, res: Response): Promise<void> {
   try {
@@ -40,7 +40,7 @@ export async function add(req: AuthRequest, res: Response): Promise<void> {
 
 export async function update(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const contact = await contactService.updateContact(parseInt(req.params.id), req.body);
+    const contact = await contactService.updateContact(getRouteId(req.params), req.body);
     sendSuccess(res, contact);
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));
@@ -49,7 +49,7 @@ export async function update(req: AuthRequest, res: Response): Promise<void> {
 
 export async function remove(req: AuthRequest, res: Response): Promise<void> {
   try {
-    await contactService.deleteContact(parseInt(req.params.id));
+    await contactService.deleteContact(getRouteId(req.params));
     sendSuccess(res, undefined, 'Contact deleted');
   } catch (error) {
     sendError(res, 400, getErrorMessage(error));
