@@ -1,3 +1,4 @@
+// import 'dotenv/config';
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 import { configureDatabaseUrl } from './database-url';
 

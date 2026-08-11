@@ -1,7 +1,9 @@
 /**
  * Builds the MySQL URL used by Prisma from separate environment variables.
  * DATABASE_URL remains supported as an explicit override for hosted platforms.
- */
+*/
+import 'dotenv/config';
+
 export function getDatabaseUrl(): string {
   const host = process.env.DB_HOST;
   const port = process.env.DB_PORT || '3306';

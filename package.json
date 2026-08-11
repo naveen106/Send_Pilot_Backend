@@ -8,7 +8,7 @@
     "npm": ">=10"
   },
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev": "tsx watch --clear-screen=false src/index.ts",
     "build": "tsc",
     "check": "npm run build",
     "start": "node dist/index.js",
@@ -18,7 +18,7 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:resolve": "prisma migrate resolve",
     "prisma:studio": "prisma studio",
-    "seed": "ts-node --project tsconfig.seed.json prisma/seed.ts"
+    "seed": "tsx --tsconfig tsconfig.seed.json prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "^7.9.1",
@@ -54,7 +54,7 @@
     "@types/nodemailer": "^8.0.1",
     "@types/uuid": "^11.0.0",
     "prisma": "^7.9.1",
-    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }
 }
