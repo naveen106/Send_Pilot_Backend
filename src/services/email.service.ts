@@ -3,7 +3,10 @@ import { createTransporter } from '../config/smtp';
 import { appConfig } from '../config/app.config';
 import { emailLogger } from '../utils/logger';
 import { parseJsonArray, randomDelay, sleep } from '../utils/helpers';
-import { SendMode, MailAttachment } from '../types';
+import juice from 'juice';
+import { htmlToText } from 'html-to-text';
+import { SEND_MODES, SendMode, MailAttachment } from '../types';
+import { AssignmentDeliveryStatus, CampaignPauseReason, CampaignStatus } from '@prisma/client';
 
 const GLOBAL_DAILY_LIMIT = appConfig.email.globalDailyLimit;
 const DELAY_MIN = appConfig.email.randomDelayMinMs;
@@ -44,7 +47,33 @@ function buildMailAttachments(attachments: MailAttachment[]) {
 }
 
 function buildMailOptions(to: string, subject: string, html: string, attachments: MailAttachments) {
-  return { from: process.env.SMTP_USER, to, subject, html, attachments };
+  const inlinedHtml = inlineHtmlStyles(html);
+  return {
+    from: process.env.SMTP_USER,
+    to,
+    subject,
+    html: inlinedHtml,
+    text: htmlToPlainText(inlinedHtml),
+    attachments,
+  };
+}
+
+//inlines the style so gmail can render it since <style> tag is not supported.
+function inlineHtmlStyles(html: string) {
+  if (!html.trim()) return html;
+  return juice(html, { removeStyleTags: true });
+}
+
+//converts html to plain text. If the html is empty, it returns an empty string.
+function htmlToPlainText(source: string) {
+  if (!source.trim()) return '';
+  return htmlToText(source, {
+    wordwrap: false,
+    selectors: [
+      { selector: 'a', format: 'inline', options: { hideLinkHrefIfSameAsText: true } },
+      { selector: 'img', format: 'skip' },
+    ],
+  }).trim();
 }
 
 function normalizeEmail(email: string) {
@@ -79,7 +108,7 @@ function smtpRejectionReason(mailResponse: MailResponse, email: string) {
 
 async function loadRecipients(campaignId: number, campaign: { isAssigned: boolean; recipients: string }, retryFailed: boolean) {
   const assignments = await prisma.assignedCampaigns.findMany({
-    where: { campaignId, deliveryStatus: 'PENDING' },
+    where: { campaignId, deliveryStatus: AssignmentDeliveryStatus.PENDING },
     select: { id: true, contact: { select: { id: true, email: true } } },
   });
 
@@ -339,18 +368,18 @@ async function sendImmediately(context: SendContext, recipients: string[]): Prom
 }
 
 async function pauseAtDailyLimit(campaignId: number) {
-  emailLogger.warn(`24-hour global email limit reached. Pausing campaign ${campaignId}`);
-  await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+  emailLogger.warn(`24-hour email limit reached. Pausing campaign ${campaignId}`);
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.DAILY_LIMIT } });
 }
 
 async function pauseForActiveSend(campaignId: number) {
   emailLogger.info(`Another send is processing campaign ${campaignId}. Pausing this run.`);
-  await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.ACTIVE_SEND } });
 }
 
 async function pauseForPersistenceFailure(campaignId: number) {
   emailLogger.warn(`Campaign ${campaignId} paused because an accepted email could not be recorded safely.`);
-  await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'PAUSED' } });
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.PAUSED, pauseReason: CampaignPauseReason.PERSISTENCE_FAILURE } });
 }
 
 async function updateFinishedStatus(campaignId: number, result: SendResult, mode: SendMode) {
@@ -358,7 +387,7 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
 
   await prisma.campaign.update({
     where: { id: campaignId },
-    data: { status: result.sent > 0 ? 'COMPLETED' : 'FAILED' },
+    data: { status: result.sent > 0 ? CampaignStatus.COMPLETED : CampaignStatus.FAILED, pauseReason: null },
   });
 
   emailLogger.info(
@@ -375,7 +404,7 @@ async function updateFinishedStatus(campaignId: number, result: SendResult, mode
  * rows are removed and every successful delivery is written to history;
  * failed queue rows remain available for retry.
  */
-export async function sendCampaign(campaignId: number, mode: SendMode = 'immediate', retryFailed = false): Promise<void> {
+export async function sendCampaign(campaignId: number, mode: SendMode = SEND_MODES.IMMEDIATE, retryFailed = false): Promise<void> {
   try {
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
     if (!campaign) throw new Error('Campaign not found');
@@ -387,28 +416,32 @@ export async function sendCampaign(campaignId: number, mode: SendMode = 'immedia
         return;
       }
       emailLogger.info(`Campaign ${campaignId}: no recipients, marking COMPLETED`);
-      await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'COMPLETED' } });
+      await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.COMPLETED } });
       return;
     }
 
-    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'RUNNING' } });
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.RUNNING, pauseReason: null } });
 
     const context: SendContext = {
       campaignId,
-      dailyLimit: Math.min(campaign.dailyLimit ?? 50, GLOBAL_DAILY_LIMIT),
+      // Immediate sends are governed only by the global quota. Scheduled and
+      // interval sends also enforce the campaign-level 24-hour limit.
+      dailyLimit: mode === SEND_MODES.IMMEDIATE
+        ? GLOBAL_DAILY_LIMIT
+        : Math.min(campaign.dailyLimit ?? 50, GLOBAL_DAILY_LIMIT),
       subject: campaign.subject,
       html: campaign.htmlContent,
       attachments: buildMailAttachments(parseJsonArray<MailAttachment>(campaign.attachments)),
       transporter: createTransporter(),
       assignments,
     };
-    const result = mode === 'interval'
+    const result = mode === SEND_MODES.INTERVAL
       ? await sendAtIntervals(context, recipients)
       : await sendImmediately(context, recipients);
 
     await updateFinishedStatus(campaignId, result, mode);
   } catch (error) {
     emailLogger.error(`Campaign ${campaignId} crashed: ${(error as Error).message}`);
-    await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'FAILED' } }).catch(() => {});
+    await prisma.campaign.update({ where: { id: campaignId }, data: { status: CampaignStatus.FAILED, pauseReason: null } }).catch(() => {});
   }
 }
