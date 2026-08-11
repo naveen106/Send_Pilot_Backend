@@ -3,6 +3,8 @@ import { createTransporter } from '../config/smtp';
 import { appConfig } from '../config/app.config';
 import { emailLogger } from '../utils/logger';
 import { parseJsonArray, randomDelay, sleep } from '../utils/helpers';
+import juice from 'juice';
+import { htmlToText } from 'html-to-text';
 import { SEND_MODES, SendMode, MailAttachment } from '../types';
 import { AssignmentDeliveryStatus, CampaignPauseReason, CampaignStatus } from '@prisma/client';
 
@@ -45,7 +47,33 @@ function buildMailAttachments(attachments: MailAttachment[]) {
 }
 
 function buildMailOptions(to: string, subject: string, html: string, attachments: MailAttachments) {
-  return { from: process.env.SMTP_USER, to, subject, html, attachments };
+  const inlinedHtml = inlineHtmlStyles(html);
+  return {
+    from: process.env.SMTP_USER,
+    to,
+    subject,
+    html: inlinedHtml,
+    text: htmlToPlainText(inlinedHtml),
+    attachments,
+  };
+}
+
+//inlines the style so gmail can render it since <style> tag is not supported.
+function inlineHtmlStyles(html: string) {
+  if (!html.trim()) return html;
+  return juice(html, { removeStyleTags: true });
+}
+
+//converts html to plain text. If the html is empty, it returns an empty string.
+function htmlToPlainText(source: string) {
+  if (!source.trim()) return '';
+  return htmlToText(source, {
+    wordwrap: false,
+    selectors: [
+      { selector: 'a', format: 'inline', options: { hideLinkHrefIfSameAsText: true } },
+      { selector: 'img', format: 'skip' },
+    ],
+  }).trim();
 }
 
 function normalizeEmail(email: string) {
