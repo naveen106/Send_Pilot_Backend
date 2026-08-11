@@ -3,6 +3,7 @@ import { body } from 'express-validator';
 import { AuthRequest } from '../types';
 import * as authService from '../services/auth.service';
 import { getErrorMessage, sendError, sendSuccess } from '../utils/http';
+import { clearRefreshTokenCookie, getRefreshToken, setRefreshTokenCookie } from '../utils/refresh-cookie';
 
 export const loginValidation = [
   body('email').isEmail().normalizeEmail(),
@@ -13,7 +14,9 @@ export async function login(req: AuthRequest, res: Response): Promise<void> {
   try {
     const { email, password } = req.body;
     const result = await authService.loginUser(email, password);
-    sendSuccess(res, result, 'Login successful');
+    setRefreshTokenCookie(res, result.refreshToken);
+    const { refreshToken: _refreshToken, ...safeResult } = result;
+    sendSuccess(res, safeResult, 'Login successful');
   } catch (error) {
     sendError(res, 401, getErrorMessage(error));
   }
@@ -31,6 +34,28 @@ export async function forgotPassword(req: AuthRequest, res: Response): Promise<v
     // Keep provider details in server logs while returning a clear response.
     sendError(res, 500, 'Server error: we could not send the reset email. Please try again later.');
   }
+}
+
+export async function refresh(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const refreshToken = getRefreshToken(req);
+    if (!refreshToken) {
+      sendError(res, 401, 'Refresh token is required');
+      return;
+    }
+    const result = await authService.refreshAccessToken(refreshToken);
+    setRefreshTokenCookie(res, result.refreshToken);
+    sendSuccess(res, { token: result.accessToken }, 'Token refreshed');
+  } catch (error) {
+    sendError(res, 401, getErrorMessage(error));
+  }
+}
+
+export async function logout(req: AuthRequest, res: Response): Promise<void> {
+  const refreshToken = getRefreshToken(req);
+  if (refreshToken) await authService.logout(refreshToken);
+  clearRefreshTokenCookie(res);
+  sendSuccess(res, undefined, 'Logged out');
 }
 
 export async function resetPassword(req: AuthRequest, res: Response): Promise<void> {

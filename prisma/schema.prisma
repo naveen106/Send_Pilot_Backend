@@ -37,14 +37,32 @@ model User {
   name              String
   role              Role       @default(USER)
   isActive          Boolean    @default(true)
+  // Incremented whenever an account change must revoke existing sessions.
+  tokenVersion      Int        @default(0)
   lastLoginAt       DateTime?
   resetToken        String?    @unique
   resetTokenExpiry  DateTime?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
   campaigns         Campaign[]
+  refreshTokens     RefreshToken[]
 
   @@map("users")
+}
+
+// Refresh tokens are stored as hashes so a database read leak cannot be used
+// to create a new access session. Each token is one-time use and is rotated.
+model RefreshToken {
+  id          Int       @id @default(autoincrement())
+  tokenHash   String    @unique
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, revokedAt])
+  @@map("refreshTokens")
 }
 
 model Campaign {

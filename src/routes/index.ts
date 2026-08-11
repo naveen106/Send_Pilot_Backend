@@ -14,6 +14,10 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 router.post('/auth/login', authCtrl.loginValidation, validate, authCtrl.login);
+// Refresh/logout read the HttpOnly cookie; the token is intentionally not
+// accepted from JavaScript request bodies.
+router.post('/auth/refresh', authCtrl.refresh);
+router.post('/auth/logout', authCtrl.logout);
 router.post('/auth/forgot-password', body('email').isEmail().normalizeEmail(), validate, authCtrl.forgotPassword);
 router.post('/auth/reset-password', body('token').notEmpty(), body('password').isLength({ min: 6 }), validate, authCtrl.resetPassword);
 router.get('/auth/me', authenticate, authCtrl.getMe);
