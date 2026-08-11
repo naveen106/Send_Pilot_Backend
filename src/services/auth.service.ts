@@ -14,37 +14,31 @@ export async function ensureAdminExists(): Promise<void> {
     return;
   }
 
-  const resetPassword = process.env.ADMIN_RESET_PASSWORD === 'true';
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    if (!resetPassword) {
+  // const resetPassword = process.env.ADMIN_RESET_PASSWORD === 'true';
+  const exists = await prisma.user.findUnique({ where: { email } });
+  if (exists){
       logger.info(`Admin account already exists: ${email}`);
       return;
-    }
+  }
+  else
+      logger.info(`Admin account does not exist, you won't be able to log in until an admin is created. Provide ADMIN_EMAIL and ADMIN_PASSWORD in the .env file to create an admin account automatically.`);
 
-    const password = crypto.randomBytes(18).toString('base64url');
-    const hashed = await bcrypt.hash(password, 12);
-    await prisma.user.update({
-      where: { id: existing.id },
-      data: { password: hashed, role: 'ADMIN', isActive: true, resetToken: null, resetTokenExpiry: null },
-    });
-
-    logger.warn(`Admin password reset for ${email}. Change it after first login.`);
-    logger.warn(`ADMIN LOGIN — email: ${email} | password: ${password}`);
+  //if admin doesn't exist, create a new one using the info in env file.
+  const password = process.env.ADMIN_PASSWORD;
+  if (!password) {
+    logger.warn('ADMIN_PASSWORD not set — skipping admin auto-creation');
     return;
   }
 
-  // Never use a placeholder/configured password for runtime auto-creation.
-  // Generate it here so the value printed to the console is the real login password.
-  const password = crypto.randomBytes(18).toString('base64url');
+  // const password = crypto.randomBytes(18).toString('base64url');
   const hashed = await bcrypt.hash(password, 12);
   await prisma.user.create({
     data: { email, password: hashed, name: 'Admin', role: 'ADMIN' },
   });
-
   logger.success('Admin account created', { email });
-  logger.warn(`ADMIN LOGIN — email: ${email} | password: ${password}`);
-  logger.warn('Change the admin password after the first login');
+  
+  // logger.warn(`ADMIN LOGIN — email: ${email} | password: ${password}`);
+  // logger.warn('Change the admin password after the first login');
 }
 
 export async function loginUser(email: string, password: string) {
@@ -75,9 +69,9 @@ export async function loginUser(email: string, password: string) {
   };
 }
 
-export async function forgotPassword(email: string): Promise<void> {
+export async function forgotPassword(email: string): Promise<boolean> {
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || !user.isActive) return;
+  if (!user || !user.isActive) return false; //user not found or inactive, but don't reveal this to the client for security reasons.
 
   const token = crypto.randomBytes(32).toString('hex');
   const expiry = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
@@ -103,6 +97,7 @@ export async function forgotPassword(email: string): Promise<void> {
   });
 
   logger.info(`Password reset email sent to: ${email}`);
+  return true; //user exists
 }
 
 export async function resetPassword(token: string, newPassword: string): Promise<void> {

@@ -1,15 +1,14 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
-import { configureDatabaseUrl } from './database-url';
+import { createPrismaAdapter } from './prisma-adapter';
 
-configureDatabaseUrl();
-
-const prisma = new PrismaClient({
+const prisma: PrismaClient<any> = new PrismaClient({
+  adapter: createPrismaAdapter(),
   log: [
     { emit: 'event', level: 'query' },
     { emit: 'event', level: 'error' },
     { emit: 'event', level: 'warn' },
-  ],
+  ] as Prisma.LogDefinition[],
 });
 
 prisma.$on('error', (e) => logger.error(`Prisma error: ${e.message}`));
