@@ -38,7 +38,14 @@ async function main() {
   await prisma.user.upsert({
     where: { email },
     update: resetPassword
-      ? { password: hashed, role: 'ADMIN', isActive: true, resetToken: null, resetTokenExpiry: null }
+      ? {
+          password: hashed,
+          role: 'ADMIN',
+          isActive: true,
+          resetToken: null,
+          resetTokenExpiry: null,
+          tokenVersion: { increment: 1 },
+        }
       : {},
     create: { email, password: hashed, name, role: 'ADMIN' },
   });

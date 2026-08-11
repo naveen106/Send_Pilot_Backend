@@ -1,11 +1,9 @@
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import prisma from '../config/database';
 import { createTransporter } from '../config/smtp';
 import logger from '../utils/logger';
-import { JwtPayload, Role } from '../types';
-import { getJwtSecret } from '../config/env';
+import { issueAccessToken, issueRefreshToken, revokeUserTokens, rotateRefreshToken } from './auth-token.service';
 
 export async function ensureAdminExists(): Promise<void> {
   const email = process.env.ADMIN_EMAIL || process.env.SMTP_USER;
@@ -57,14 +55,17 @@ export async function loginUser(email: string, password: string) {
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-  const payload: JwtPayload = { userId: user.id, email: user.email, role: user.role as Role };
-  const token = jwt.sign(payload, getJwtSecret(), {
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  } as jwt.SignOptions);
+  const token = issueAccessToken({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    tokenVersion: user.tokenVersion,
+  });
 
   logger.info(`User logged in: ${email} [${user.role}]`);
   return {
     token,
+    refreshToken: await issueRefreshToken(user.id),
     user: { id: user.id, email: user.email, name: user.name, role: user.role, lastLoginAt: user.lastLoginAt },
   };
 }
@@ -110,8 +111,26 @@ export async function resetPassword(token: string, newPassword: string): Promise
   const hashed = await bcrypt.hash(newPassword, 12);
   await prisma.user.update({
     where: { id: user.id },
-    data: { password: hashed, resetToken: null, resetTokenExpiry: null },
+    data: {
+      password: hashed,
+      resetToken: null,
+      resetTokenExpiry: null,
+      // Keep the password change and token revocation in one database write.
+      tokenVersion: { increment: 1 },
+    },
   });
+  await prisma.refreshToken.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } });
 
   logger.info(`Password reset for: ${user.email}`);
+}
+
+export async function refreshAccessToken(refreshToken: string) {
+  return rotateRefreshToken(refreshToken);
+}
+
+export async function logout(refreshToken: string): Promise<void> {
+  await prisma.refreshToken.updateMany({
+    where: { tokenHash: crypto.createHash('sha256').update(refreshToken).digest('hex'), revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
 }

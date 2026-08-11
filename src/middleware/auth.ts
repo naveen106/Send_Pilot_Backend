@@ -16,6 +16,9 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
 
   try {
     const decoded = jwt.verify(token, getJwtSecret()) as JwtPayload;
+    // Normal requests remain stateless: signature and expiry are enough here.
+    // Account changes take effect when this short-lived token expires; refresh
+    // tokens are checked and revoked centrally in auth-token.service.ts.
     req.user = decoded;
     next();
   } catch (error) {
