@@ -2,7 +2,11 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
 import { createPrismaAdapter } from './prisma-adapter';
 
-const prisma: PrismaClient<any> = new PrismaClient({
+type PrismaOptionsWithLogging = Prisma.PrismaClientOptions & {
+  log: Prisma.LogDefinition[];
+};
+
+const prisma: PrismaClient<PrismaOptionsWithLogging> = new PrismaClient({
   adapter: createPrismaAdapter(),
   log: [
     { emit: 'event', level: 'query' },
@@ -20,7 +24,7 @@ export async function validateDatabaseConnection(): Promise<void> {
     logger.success('Database connection established successfully');
   } catch (error) {
     logger.error('Failed to connect to database', error);
-    process.exit(1);
+    throw error;
   }
 }
 
