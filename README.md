@@ -1,265 +1,267 @@
 # BulkMailer — Backend
 
-A REST API for bulk email campaign management built with Node.js, Express, TypeScript, Prisma, and MySQL.
+BulkMailer Backend is the authenticated REST API that powers campaign management, contact operations, scheduled delivery, and dashboard reporting for the BulkMailer platform.
 
----
+It is built for reliable email workflows: campaign sends are persisted, delivery history is tracked, daily quotas are enforced, scheduled work is processed by a cron-driven scheduler, and database migrations run automatically when the production container starts.
+
+## Features
+
+- REST API built with Express 5 and TypeScript
+- Prisma 7 with a MariaDB adapter and MySQL-compatible databases
+- JWT access tokens with HttpOnly refresh-token cookies
+- Secure authentication, password recovery, and session refresh
+- Role-based authorization for administrative and campaign operations
+- Campaign creation, scheduling, retry, assignment, deletion, and delivery tracking
+- Contact creation, update, import, deduplication, pagination, and search
+- CSV/XLSX uploads with a 10 MB file-size limit
+- Global daily email quota, campaign daily limits, and configurable send modes
+- Background scheduler for due campaigns
+- Structured Winston logs with date-based rotation
+- Dockerized production runtime with automatic migrations and health checks
 
 ## Tech Stack
 
-- **Node.js** + **TypeScript**
-- **Express** — HTTP server
-- **Prisma** — ORM
-- **MySQL** — database
-- **JWT** — authentication
-- **Nodemailer** — email sending
-- **node-cron** — campaign scheduler
-- **Winston** — logging with daily log rotation
-- **Multer** — file uploads (CSV/XLSX contact import)
+- **Node.js 22+** and **TypeScript 7**
+- **Express 5** — HTTP server and middleware pipeline
+- **Prisma 7** — schema, migrations, and database access
+- **MariaDB adapter** — MySQL/MariaDB connectivity
+- **MySQL-compatible database** — persistent application data
+- **JWT** — short-lived access-token authentication
+- **HttpOnly cookies** — refresh-token storage
+- **Nodemailer** — SMTP email delivery
+- **node-cron** — scheduled campaign processing
+- **Winston** — structured application and email logs
+- **Multer** — in-memory multipart uploads
+- **CSV Parse** and **ExcelJS** — contact import processing
 
----
+## Quick Start
 
-## Prerequisites
+### Prerequisites
 
-- [Node.js](https://nodejs.org/) v18 or higher
-- npm v9 or higher
-- MySQL v8 or higher
+- [Node.js](https://nodejs.org/) `22.12` or newer
+- npm `10` or newer
+- MySQL or MariaDB with a reachable database
+- SMTP credentials for sending email
 
----
+### Install and configure
 
-## Installation
+From the backend directory:
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/monkhaihq/bulk-email-sender-be.git
-cd backend
-
-# 2. Install dependencies
+`bash
 npm install
-```
-
----
-
-## Environment Variables
-
-Copy the example and fill in your values:
-
-```bash
 cp .env.example .env
-```
+`
 
-| Variable | Description | Default |
-|---|---|---|
-| `ADMIN_EMAIL` | Initial admin account email | — |
-| `ADMIN_PASSWORD` | Initial admin account password | — |
-| `ADMIN_NAME` | Initial admin display name | `Admin` |
-| `DB_HOST` | MySQL/Aiven host | `localhost` |
-| `DB_PORT` | MySQL/Aiven port | `3306` |
-| `DB_NAME` | Application database name | `bulk_email_sender` |
-| `DB_USER` | Database username | `root` |
-| `DB_PASSWORD` | Database password | — |
-| `DB_SSL_MODE` | MySQL SSL mode | `REQUIRED` |
-| `DATABASE_URL` | Optional full connection string override | Generated from the database parts above |
-| `PORT` | Server port | `5000` |
-| `NODE_ENV` | Environment | `development` |
-| `JWT_SECRET` | Secret key for signing JWTs | — |
-| `JWT_EXPIRES_IN` | JWT expiry duration | `7d` |
-| `SMTP_HOST` | SMTP server host | — |
-| `SMTP_PORT` | SMTP server port | `587` |
-| `SMTP_SECURE` | Use TLS | `false` |
-| `SMTP_USER` | SMTP username / sender email | — |
-| `SMTP_PASS` | SMTP password / app password | — |
-| `SCHEDULER_ENABLED` | Enable cron scheduler | `true` |
-| `FRONTEND_URL` | Frontend URL for password reset links | `http://localhost:3000` |
-| `LOG_LEVEL` | Winston log level | `info` |
-| `LOG_DIR` | Directory for log files | `logs` |
+On PowerShell:
 
-Email delivery limits, batch size, and interval delays are maintained in
-`src/config/app.config.ts` because they are application defaults rather than
-secrets or deployment-specific settings.
+`powershell
+Copy-Item .env.example .env
+`
 
----
+Update the database, JWT, administrator, SMTP, and frontend values in [`.env`](.env).
 
-## Database Setup
+### Initialize the database
 
-```bash
-# Generate Prisma client
+`bash
 npm run prisma:generate
-
-# Run migrations — automatically seeds the admin account on first run
 npm run prisma:migrate
+`
 
-# (Optional) Open Prisma Studio
-npm run prisma:studio
-```
+The migration command applies pending migrations and runs the Prisma seed hook. The seed creates the administrator using `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_NAME`; it does not overwrite an existing administrator. Use the forgot-password flow to change an existing password.
 
-> The admin account is created from `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_NAME` in your `.env`. The seed runs automatically after every migration via Prisma's seed hook. It uses `upsert`, so re-running is safe.
+### Start the API
 
-To add more users after setup, log in as admin and register them via the Users page.
-
----
-
-## Running Locally
-
-```bash
+`bash
 npm run dev
-```
+`
 
-Server will be available at `http://localhost:5000`.
+The API runs at [http://localhost:5000](http://localhost:5000).
 
-Health check: `GET http://localhost:5000/health`
+Health check: [http://localhost:5000/health](http://localhost:5000/health)
 
----
+## Available Scripts
 
-## Building for Production
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Starts the development server with automatic TypeScript reloads. |
+| `npm run build` | Compiles TypeScript into [`dist/`](dist/). |
+| `npm run check` | Runs the production TypeScript build as a validation check. |
+| `npm start` | Starts the compiled server from [`dist/index.js`](dist/index.js). |
+| `npm run prisma:generate` | Generates the Prisma client. |
+| `npm run prisma:migrate` | Applies committed migrations in deployment environments and runs the seed hook. |
+| `npm run prisma:migrate:dev` | Creates and applies a development migration. |
+| `npm run prisma:migrate:resolve` | Resolves a migration state manually. |
+| `npm run prisma:studio` | Opens Prisma Studio for database inspection. |
+| `npm run seed` | Runs the administrator seed script directly. |
 
-```bash
-npm run build
-npm start
-```
+## Configuration
 
----
+Environment variables are read from [`.env.example`](.env.example). Copy it to [`.env`](.env). The application accepts either a complete `DATABASE_URL` or the individual database connection variables below.
+
+| Variable | Purpose | Example or default |
+| --- | --- | --- |
+| `DATABASE_URL` | Optional complete database connection string. | Generated when omitted |
+| `DB_HOST` | Database hostname. | — |
+| `DB_PORT` | Database port. | `3306` |
+| `DB_NAME` | Database name. | — |
+| `DB_USER` | Database username. | — |
+| `DB_PASSWORD` | Database password. | — |
+| `DB_SSL_MODE` | Database TLS mode. | `REQUIRED` |
+| `PRISMA_CONNECTION_LIMIT` | Prisma connection pool size. | `3` |
+| `PRISMA_POOL_TIMEOUT` | Pool acquisition timeout in seconds. | `30` |
+| `PORT` | HTTP server port. | `5000` |
+| `NODE_ENV` | Runtime environment. | `development` |
+| `JWT_SECRET` | Long, random signing secret. | Required |
+| `JWT_EXPIRES_IN` | Access-token lifetime. | `15m` |
+| `ADMIN_EMAIL` | Bootstrap administrator email. | Required |
+| `ADMIN_PASSWORD` | Bootstrap administrator password. | Required |
+| `ADMIN_NAME` | Bootstrap administrator display name. | — |
+| `SMTP_HOST` | SMTP server hostname. | Required for email |
+| `SMTP_PORT` | SMTP server port. | `587` |
+| `SMTP_SECURE` | Enables SMTP secure mode. | `false` |
+| `SMTP_TLS_REJECT_UNAUTHORIZED` | Controls SMTP certificate verification. | `true` |
+| `SMTP_USER` | SMTP username and sender address. | Required for email |
+| `SMTP_PASS` | SMTP password or app password. | Required for email |
+| `MAX_DAILY_EMAILS` | Global rolling 24-hour send quota. | `200` |
+| `SCHEDULER_ENABLED` | Enables scheduled campaign processing. | `true` |
+| `FRONTEND_URL` | Allowed CORS origin and reset-link base URL. | `http://localhost:3000` |
+| `LOG_LEVEL` | Minimum log level to write. | `info` |
+| `LOG_DIR` | Log output directory. | `logs` |
+
+The service rejects startup when database configuration or `JWT_SECRET` is missing or uses a placeholder value.
 
 ## Project Structure
 
-```
+<pre>
 backend/
-├── prisma/
-│   ├── migrations/        # Prisma migration files
-│   ├── schema.prisma      # Database schema
-│   └── seed.ts            # Database seeder (upserts admin account)
-├── src/
-│   ├── config/
-│   │   ├── database.ts    # PrismaClient singleton + validateDatabaseConnection()
-│   │   └── smtp.ts        # getSmtpConfig(), createTransporter(), testSmtpConnection()
-│   ├── controllers/       # Thin HTTP layer — parse req, call service, send res
-│   │   ├── auth.controller.ts
-│   │   ├── campaign.controller.ts
-│   │   ├── contact.controller.ts
-│   │   ├── logs.controller.ts
-│   │   └── smtp.controller.ts
-│   ├── middleware/
-│   │   ├── auth.ts        # authenticate() (JWT verify) + authorize(...roles) (role guard)
-│   │   ├── logging.ts     # requestLogger (finish-event timing) + errorHandler (500 fallback)
-│   │   └── validation.ts  # validate() — runs express-validator result check
-│   ├── routes/
-│   │   └── index.ts       # All route definitions; multer upload configured here
-│   ├── services/          # Business logic; only layer that touches Prisma
-│   │   ├── auth.service.ts        # loginUser, forgotPassword, resetPassword, ensureAdminExists
-│   │   ├── campaign.service.ts    # createCampaign, getCampaigns, sendCampaignNow, getDashboardStats
-│   │   ├── contact.service.ts     # importContacts (CSV/XLSX), getContacts, addContact, removeDuplicates
-│   │   ├── email.service.ts       # sendCampaign() — batch/interval send with daily limit enforcement
-│   │   └── scheduler.service.ts   # node-cron every-minute tick; triggers due SCHEDULED campaigns
-│   ├── types/
-│   │   └── index.ts       # Shared TS types: Role, JwtPayload, AuthRequest, SmtpConfig, ApiResponse
-│   ├── utils/
-│   │   ├── helpers.ts     # Pure utilities: parseJsonArray, randomDelay, sleep, sanitizeLog
-│   │   └── logger.ts      # Structured date-folder logger + named emailLogger
-│   ├── app.ts             # Express setup: CORS, JSON body, requestLogger, routes, errorHandler
-│   └── index.ts           # Bootstrap: DB connect → ensureAdminExists → startScheduler → listen
-├── logs/                  # Auto-generated date-folder log files
-├── .env                   # Environment variables (not committed)
-├── package.json
-├── tsconfig.json
-└── tsconfig.seed.json
-```
+├── prisma/                   # Database
+├── src/                      # Application
+│   ├── config/               # Configuration
+│   ├── controllers/          # HTTP handlers
+│   ├── middleware/           # Auth and validation
+│   ├── routes/               # API routes
+│   ├── services/             # Business logic
+│   ├── types/                # TypeScript types
+│   ├── utils/                # Shared utilities
+│   ├── app.ts                # Express setup
+│   └── index.ts              # Server startup
+├── Dockerfile                # Production image
+├── docker-entrypoint.sh      # Startup migrations
+├── prisma.config.ts          # Prisma configuration
+├── package.json              # Dependencies and scripts
+├── tsconfig.json             # TypeScript configuration
+└── .env.example              # Environment template
+</pre>
 
----
+Important paths:
 
-## API Endpoints
+- [`src/routes/index.ts`](src/routes/index.ts) — current API route definitions
+- [`src/services/`](src/services/) — campaign, contact, auth, email, and scheduler workflows
+- [`src/config/database-url.ts`](src/config/database-url.ts) — database URL construction and pool settings
+- [`src/middleware/auth.ts`](src/middleware/auth.ts) — JWT authentication and role authorization
+- [`prisma/schema.prisma`](prisma/schema.prisma) — database model
+- [`prisma/migrations/`](prisma/migrations/) — committed schema history
+- [`Dockerfile`](Dockerfile) — production build and runtime definition
 
-### Auth
-| Method | Path | Access |
-|---|---|---|
+## API Overview
+
+All application routes are mounted under `/api`.
+
+### Authentication
+
+| Method | Endpoint | Access |
+| --- | --- | --- |
 | `POST` | `/api/auth/login` | Public |
-| `POST` | `/api/auth/signup` | Public |
+| `POST` | `/api/auth/refresh` | Refresh cookie |
+| `POST` | `/api/auth/logout` | Refresh cookie |
 | `POST` | `/api/auth/forgot-password` | Public |
 | `POST` | `/api/auth/reset-password` | Public |
-| `POST` | `/api/auth/register` | ADMIN |
 | `GET` | `/api/auth/me` | Authenticated |
 
-### Users
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/api/users` | ADMIN |
-| `PATCH` | `/api/users/:id/role` | ADMIN |
-| `PATCH` | `/api/users/:id/toggle` | ADMIN |
+### Dashboard
 
-### Campaigns
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/api/campaigns` | Authenticated |
-| `POST` | `/api/campaigns` | ADMIN, MANAGER |
-| `GET` | `/api/campaigns/:id` | Authenticated |
-| `POST` | `/api/campaigns/:id/send` | ADMIN, MANAGER |
-| `POST` | `/api/campaigns/:id/retry` | ADMIN, MANAGER |
-| `DELETE` | `/api/campaigns/:id` | ADMIN |
-| `DELETE` | `/api/campaigns` | ADMIN (bulk) |
-
-### Contacts
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/api/contacts` | Authenticated |
-| `POST` | `/api/contacts` | ADMIN, MANAGER |
-| `PUT` | `/api/contacts/:id` | ADMIN, MANAGER |
-| `DELETE` | `/api/contacts/:id` | ADMIN |
-| `DELETE` | `/api/contacts` | ADMIN (bulk) |
-| `POST` | `/api/contacts/import` | ADMIN, MANAGER |
-| `POST` | `/api/contacts/deduplicate` | ADMIN |
-
-### SMTP
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/api/smtp/config` | ADMIN |
-| `POST` | `/api/smtp/test` | ADMIN |
-
-### Logs & Scheduler
-| Method | Path | Access |
-|---|---|---|
-| `GET` | `/api/logs` | ADMIN |
-| `GET` | `/api/scheduler` | ADMIN |
-| `POST` | `/api/scheduler/toggle` | ADMIN |
+| Method | Endpoint | Access |
+| --- | --- | --- |
 | `GET` | `/api/dashboard` | Authenticated |
 
----
+### Campaigns
 
-## Roles & Permissions
+| Method | Endpoint | Access |
+| --- | --- | --- |
+| `GET` | `/api/campaigns` | Authenticated |
+| `POST` | `/api/campaigns` | Admin or manager |
+| `POST` | `/api/campaigns/assign` | Admin or manager |
+| `GET` | `/api/campaigns/:id` | Authenticated |
+| `POST` | `/api/campaigns/:id/send` | Admin or manager |
+| `POST` | `/api/campaigns/:id/retry` | Admin or manager |
+| `DELETE` | `/api/campaigns/:id` | Admin |
+| `DELETE` | `/api/campaigns` | Admin |
 
-| Role | Campaigns | Contacts | Users | SMTP | Logs | Scheduler |
-|---|---|---|---|---|---|---|
-| `ADMIN` | ✅ full | ✅ full | ✅ | ✅ | ✅ | ✅ |
-| `MANAGER` | ✅ no delete | ✅ no delete | ❌ | ❌ | ❌ | ❌ |
-| `USER` | Read only | Read only | ❌ | ❌ | ❌ | ❌ |
+### Contacts
 
----
+| Method | Endpoint | Access |
+| --- | --- | --- |
+| `GET` | `/api/contacts` | Authenticated |
+| `POST` | `/api/contacts` | Admin or manager |
+| `PUT` | `/api/contacts/:id` | Admin or manager |
+| `DELETE` | `/api/contacts/:id` | Admin |
+| `DELETE` | `/api/contacts` | Admin |
+| `POST` | `/api/contacts/import` | Admin or manager |
+| `POST` | `/api/contacts/deduplicate` | Admin |
+
+## Roles and Authorization
+
+Authorization is enforced by backend middleware, not only by the frontend.
+
+| Role | Capabilities |
+| --- | --- |
+| `ADMIN` | Full campaign and contact management, including deletion and deduplication |
+| `MANAGER` | Create, send, retry, assign campaigns and manage contacts without destructive admin actions |
+| `USER` | Authenticated read access where supported |
+
+Access tokens are short-lived. Refresh tokens are stored in HttpOnly cookies and rotated by the refresh flow. Configure `FRONTEND_URL` so credentialed CORS and password-reset links work correctly.
+
+## Docker
+
+Build the production image from the backend directory:
+
+`bash
+docker build -t bulkmailer-backend .
+`
+
+Run it with database and SMTP configuration:
+
+`bash
+docker run --rm -p 5000:5000 --env-file .env bulkmailer-backend
+`
+
+The container:
+
+1. Installs production dependencies.
+2. Generates Prisma client artifacts during the build.
+3. Runs `prisma migrate deploy` on startup.
+4. Starts the compiled API.
+5. Reports healthy when `/health` responds successfully.
+
+The database must be reachable from the container. With Docker Desktop, `localhost` inside the container refers to the container itself; use `host.docker.internal` for a database running on the host.
 
 ## Logging
 
-Log files are written to date-specific folders with daily rotation (30 days, 20 MB per file):
+Logs are written under the directory configured by `LOG_DIR` (default: [`logs/`](logs/)).
 
-```text
-logs/
-└── 2026-08-04/
-    ├── app.log
-    ├── debug.log
-    ├── error.log
-    ├── email-sending.log
-    ├── info.log
-    ├── success.log
-    └── warn.log
-```
+Supported levels include `error`, `warn`, `success`, `info`, `http`, `verbose`, `debug`, and `silly`. Email delivery events are written to a dedicated email-sending log, while application logs are organized by date and level.
 
-Every entry uses the same structured format, including the timestamp, level, source
-location, message, and additional data:
+Do not commit logs or environment files. Both are excluded by [`.gitignore`](.gitignore).
 
-```text
-[2026-08-04 10:30:13] [SUCCESS] (src/index.ts:18) {"message":"Server running on http://localhost:5000","data":{}}
-```
+## Development Notes
 
-Set `LOG_LEVEL=debug` when debug entries are needed. Supported levels are `error`,
-`warn`, `success`, `info`, `http`, `verbose`, `debug`, and `silly`.
+- Run `npm run check` before opening a pull request.
+- Create development migrations with `npm run prisma:migrate:dev`.
+- Keep database access inside [`src/services/`](src/services/).
+- Keep request parsing and response formatting inside [`src/controllers/`](src/controllers/).
+- Store secrets only in [`.env`](.env), never in source code or committed configuration.
+- Update [`UPGRADING.md`](UPGRADING.md) when a change requires migration or deployment action.
 
-| File | Content |
-|---|---|
-| `YYYY-MM-DD/app.log` | All application logs |
-| `YYYY-MM-DD/<level>.log` | Entries for one exact level, including `success`, `debug`, and `error` |
-| `YYYY-MM-DD/email-sending.log` | Email send/fail events |
+## License
+
+This project is private and intended for internal use.

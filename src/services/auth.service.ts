@@ -12,7 +12,6 @@ export async function ensureAdminExists(): Promise<void> {
     return;
   }
 
-  // const resetPassword = process.env.ADMIN_RESET_PASSWORD === 'true';
   const exists = await prisma.user.findUnique({ where: { email } });
   if (exists){
       logger.info(`Admin account already exists: ${email}`);
