@@ -60,6 +60,16 @@ Copy-Item .env.example .env
 
 Update the database, JWT, administrator, SMTP, and frontend values in [`.env`](.env).
 
+### One-command setup
+
+After configuring the database values in `.env`, run:
+
+```bash
+bash scripts/setup.sh
+```
+
+The script installs the locked dependencies, preserves an existing `.env`, and uses `.env.example` only as a starting template when `.env` is missing. It then generates the Prisma client, applies migrations, and runs the administrator seed. It is safe to rerun. Database credentials and a real `JWT_SECRET` are required because migrations connect to the database.
+
 ### Initialize the database
 
 `bash
@@ -145,6 +155,11 @@ backend/
 │   ├── utils/                # Shared utilities
 │   ├── app.ts                # Express setup
 │   └── index.ts              # Server startup
+├── docs/                     # Setup, run, and usage guides
+│   ├── setup.md              # Installation and database setup
+│   ├── run.md                # Start, stop, and check commands
+│   └── Usage.md              # Short API usage guide
+├── scripts/setup.sh          # Local setup automation
 ├── Dockerfile                # Production image
 ├── docker-entrypoint.sh      # Startup migrations
 ├── prisma.config.ts          # Prisma configuration
@@ -155,6 +170,9 @@ backend/
 
 Important paths:
 
+- [`docs/setup.md`](docs/setup.md) — complete local setup guide
+- [`docs/run.md`](docs/run.md) — start, stop, Docker, and health-check instructions
+- [`docs/Usage.md`](docs/Usage.md) — short backend usage guide
 - [`src/routes/index.ts`](src/routes/index.ts) — current API route definitions
 - [`src/services/`](src/services/) — campaign, contact, auth, email, and scheduler workflows
 - [`src/config/database-url.ts`](src/config/database-url.ts) — database URL construction and pool settings
