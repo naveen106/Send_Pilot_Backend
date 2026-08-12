@@ -17,7 +17,6 @@ const prisma = new PrismaClient({ adapter: createPrismaAdapter() });
 
 async function main() {
   const email = process.env.ADMIN_EMAIL;
-  const resetPassword = process.env.ADMIN_RESET_PASSWORD === 'true';
   const configuredPassword = process.env.ADMIN_PASSWORD;
   const name = process.env.ADMIN_NAME || 'Admin';
 
@@ -26,24 +25,28 @@ async function main() {
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing && !resetPassword) {
+  if (existing) {
     console.log(`Admin account ready: ${email}`);
     return;
   }
 
-  const password = resetPassword || !configuredPassword
-    ? crypto.randomBytes(18).toString('base64url')
-    : configuredPassword;
+  if (!configuredPassword) {
+    throw new Error('ADMIN_PASSWORD must be set in .env');
+  }
+
+  const password = configuredPassword;
+  if(password === undefined || password.length < 8){
+    throw new Error('ADMIN_PASSWORD must be set in .env and at least 8 characters long');
+  }
+
   const hashed = await bcrypt.hash(password, 12);
   await prisma.user.upsert({
     where: { email },
-    update: resetPassword
-      ? { password: hashed, role: 'ADMIN', isActive: true, resetToken: null, resetTokenExpiry: null }
-      : {},
+    update: {},
     create: { email, password: hashed, name, role: 'ADMIN' },
   });
 
-  console.log(`Admin account ${existing ? 'reset' : 'created'}: ${email}`);
+  console.log(`Admin account created: ${email}`);
   console.log(`ADMIN LOGIN — email: ${email} | password: ${password}`);
   console.log('Change the admin password after the first login.');
 }

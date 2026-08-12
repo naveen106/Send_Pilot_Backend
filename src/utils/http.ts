@@ -1,5 +1,18 @@
 import { Response } from 'express';
 
+/** Reads a single route parameter in a way compatible with Express 5 types. */
+export function getRouteId(params: Record<string, string | string[] | undefined>, name = 'id'): number {
+  const value = params[name];
+  const raw = Array.isArray(value) ? value[0] : value;
+  const id = Number.parseInt(raw ?? '', 10);
+
+  if (!Number.isInteger(id) || id < 1) {
+    throw new Error(`Invalid ${name}`);
+  }
+
+  return id;
+}
+
 /**
  * Sends API responses in the format used throughout the application.
  * Keeping the shape in one place prevents controllers from drifting apart.
