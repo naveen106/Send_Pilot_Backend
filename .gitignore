@@ -16,7 +16,7 @@ logs/
 # Prisma
 prisma/dev.db
 prisma/dev.db-journal
-
+ca.pem
 # OS
 .DS_Store
 Thumbs.db

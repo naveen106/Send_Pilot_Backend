@@ -1,4 +1,5 @@
 // import 'dotenv/config';
+import fs from 'node:fs';
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 import { configureDatabaseUrl } from './database-url';
 
@@ -8,6 +9,9 @@ export function createPrismaAdapter(): PrismaMariaDb {
   const database = decodeURIComponent(databaseUrl.pathname.replace(/^\//, ''));
   const poolTimeoutSeconds = Number(databaseUrl.searchParams.get('pool_timeout') || 30);
   const sslMode = process.env.DB_SSL_MODE?.trim().toUpperCase() || 'REQUIRED';
+  const caPath = process.env.DB_CA_PATH?.trim();
+  const ssl = sslMode === 'DISABLED'
+    ? false : caPath ? { ca: fs.readFileSync(caPath), rejectUnauthorized: true } : true;
 
   return new PrismaMariaDb({
     host: databaseUrl.hostname,
@@ -20,6 +24,6 @@ export function createPrismaAdapter(): PrismaMariaDb {
     // driver adapter. MariaDB expects pool acquisition time in milliseconds.
     acquireTimeout: poolTimeoutSeconds * 1000,
     connectTimeout: poolTimeoutSeconds * 1000,
-    ssl: sslMode !== 'DISABLED',
+    ssl,
   });
 }
