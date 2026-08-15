@@ -117,6 +117,7 @@ Environment variables are read from [`.env.example`](.env.example). Copy it to [
 | `DB_USER` | Database username. | — |
 | `DB_PASSWORD` | Database password. | — |
 | `DB_SSL_MODE` | Database TLS mode. | `REQUIRED` |
+| `DB_CA_PATH` | Optional path to a database CA certificate used for TLS verification. | Unset |
 | `PRISMA_CONNECTION_LIMIT` | Prisma connection pool size. | `3` |
 | `PRISMA_POOL_TIMEOUT` | Pool acquisition timeout in seconds. | `30` |
 | `PORT` | HTTP server port. | `5000` |
