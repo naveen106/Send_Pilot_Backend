@@ -289,6 +289,7 @@ const logger = createLogger(LOG_LEVEL, [
 
 /** Email events use the same structured format but remain in their own file. */
 export const emailLogger = createLogger(LOG_LEVEL, [
+  new winston.transports.Console({ format: entryFormat() }),
   new DateFolderTransport('email-sending', { format: entryFormat() }),
 ]);
 
